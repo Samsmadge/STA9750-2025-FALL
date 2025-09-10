@@ -1,0 +1,33 @@
+---
+title: "David Zhai"
+---
+# About me
+Graduate student in Quantitative Methods and Modeling with experience in Python, SQL, R, and Tableau. Skilled in data analysis, econometrics, and database management, with applied projects in simulation, financial modeling, and housing policy research. Strong communicator with proven ability to translate data into actionable insights.
+
+```{r}
+#| include: false
+1+1
+```
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+if(!require("leaflet")){
+    options(repos=c(CRAN="https://cloud.r-project.org"))
+    install.packages("leaflet")
+    stopifnot(require("leaflet"))
+}
+
+baruch_longitude <- -73.98333
+baruch_latitude  <- +40.75028
+
+leaflet() |>
+  addTiles() |>
+  setView(baruch_longitude, baruch_latitude, zoom=17) |>
+  addPopups(baruch_longitude, baruch_latitude, 
+            "I am a Master's student at <b>Baruch College</b>!")
+```
+
+--------------
+Last Updated: `r format(Sys.time(), "%A %m %d, %Y at %H:%M%p")`
