@@ -1,0 +1,540 @@
+---
+title: "STA 9750 Mini-Project #01: Gourmet Cheeseburgers Across the Globe"
+subtitle: "Exploring the Most Popular Programming on Netflix"
+author: "DavidZhai"
+format: 
+  html: 
+    theme: cyborg
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+execute:
+  enabled: true
+---
+
+# Task 1: Data Acquisition
+
+```{r}
+if(!dir.exists(file.path("data", "mp01"))){
+    dir.create(file.path("data", "mp01"), showWarnings=FALSE, recursive=TRUE)
+}
+
+GLOBAL_TOP_10_FILENAME <- file.path("data", "mp01", "global_top10_alltime.csv")
+
+if(!file.exists(GLOBAL_TOP_10_FILENAME)){
+    download.file("https://www.netflix.com/tudum/top10/data/all-weeks-global.tsv", 
+                  destfile=GLOBAL_TOP_10_FILENAME)
+}
+
+COUNTRY_TOP_10_FILENAME <- file.path("data", "mp01", "country_top10_alltime.csv")
+
+if(!file.exists(COUNTRY_TOP_10_FILENAME)){
+    download.file("https://www.netflix.com/tudum/top10/data/all-weeks-countries.tsv", 
+                  destfile=COUNTRY_TOP_10_FILENAME)
+}
+```
+
+# Task:2 Data Cleaning
+
+```{r}
+if(!require("tidyverse")) install.packages("tidyverse")
+library(readr)
+library(dplyr)
+
+GLOBAL_TOP_10 <- read_tsv(GLOBAL_TOP_10_FILENAME,na="N/A")
+#str(GLOBAL_TOP_10)
+#glimpse(GLOBAL_TOP_10)
+
+COUNTRY_TOP_10<- read_tsv(COUNTRY_TOP_10_FILENAME,na="N/A")
+#str(GLOBAL_TOP_10)
+#glimpse(GLOBAL_TOP_10)
+```
+
+# task 2: data cleaning
+
+```{r}
+#GLOBAL_TOP_10 <- GLOBAL_TOP_10 |>
+ # mutate(season_title = if_else(season_title == "N/A",NA_character_, season_title))
+
+#COUNTRY_TOP_10<- COUNTRY_TOP_10 |>
+ # mutate(season_title = if_else(season_title == "N/A",NA_character_, season_title))
+```
+
+# task 3:Data Import
+
+```         
+#making import of data start off with "N/A" as native NA
+#original:
+#GLOBAL_TOP_10 <- read_tsv(GLOBAL_TOP_10_FILENAME)
+#editded
+#GLOBAL_TOP_10 <- read_tsv(GLOBAL_TOP_10_FILENAME,na="N/A")
+```
+
+## initial data exploration
+
+```{r}
+library(DT)
+GLOBAL_TOP_10 |> 
+    head(n=20) |>
+    datatable(options=list(searching=FALSE, info=FALSE))
+COUNTRY_TOP_10 |> 
+    head(n=20) |>
+    datatable(options=list(searching=FALSE, info=FALSE))
+
+
+```
+
+## get rid of "\_"
+
+```{r}
+library(stringr)
+format_titles <- function(df){
+    colnames(df) <- str_replace_all(colnames(df), "_", " ") |> str_to_title()
+    df
+}
+GLOBAL_TOP_10 |> 
+    format_titles() |>
+    head(n=20) |>
+    datatable(options=list(searching=FALSE, info=FALSE)) |>
+    formatRound(c('Weekly Hours Viewed', 'Weekly Views'))
+
+```
+
+## dropping season title
+
+```{r}
+GLOBAL_TOP_10 |> 
+    select(-season_title) |>
+    format_titles() |>
+    head(n=20) |>
+    datatable(options=list(searching=FALSE, info=FALSE)) |>
+    formatRound(c('Weekly Hours Viewed', 'Weekly Views'))
+```
+
+## converting hours to min
+
+```{r}
+GLOBAL_TOP_10 |> 
+    mutate(`runtime_(minutes)` = round(60 * runtime)) |>
+    select(-season_title, 
+           -runtime) |>
+    format_titles() |>
+    head(n=20) |>
+    datatable(options=list(searching=FALSE, info=FALSE)) |>
+    formatRound(c('Weekly Hours Viewed', 'Weekly Views'))
+```
+
+# Task 4 Exploratory Questions
+
+## 1. How many different countries does Netflix operate in? (You can use the viewing history as a proxy for countries in which Netflix operates.
+
+```{r}
+ country <- COUNTRY_TOP_10 |> 
+  distinct(country_name) |> 
+  nrow()
+
+COUNTRY_TOP_10 |> 
+  distinct(country_name) |> 
+  format_titles() |>
+  datatable(options = list(searching = FALSE, info = FALSE))
+
+```
+
+Netflix operates in `r country` different countries
+
+## 2. Which non-English-language film has spent the most cumulative weeks in the global top 10? How many weeks did it spend?
+
+```{r}
+  library(stringr)
+  library(dplyr)
+  library(DT)
+  GLOBAL_TOP_10 |>
+  select(category,show_title,season_title,cumulative_weeks_in_top_10) |>  
+  filter(category=="Films (Non-English)")|>
+  filter(cumulative_weeks_in_top_10 == max(cumulative_weeks_in_top_10)) |>
+  datatable(options = list(searching = FALSE, info = FALSE))
+
+```
+
+The non-English film that has spent the most cumulative week in top 10 is ***All Quiet on the Western Front***, with 23 weeks in top 10
+
+![](images/Screenshot%202025-10-02%20182837.png)
+
+## 3. What is the longest film (English or non-English) to have ever appeared in the Netflix global Top 10? How long is it in minutes
+
+```{r}
+  library(stringr)
+  library(dplyr)
+  library(DT)
+GLOBAL_TOP_10 |>
+mutate(`runtime_(minutes)` = round(60 * runtime)) |>
+filter(category=='Films (English)'| category=='Films (Non-English)' ) |>  
+filter(`runtime_(minutes)`==max(`runtime_(minutes)`,na.rm = TRUE)) |>
+format_titles() |>
+datatable(options = list(searching = FALSE, info = FALSE)) |>
+formatRound(c('Runtime (Minutes)' ))
+```
+
+Longest film in English or Non-English to have every appeared in Netflix global top 10 is ***Pushpa 2: The Rule (Reloaded Version)*** with a runtime of 224 min
+
+![](images/Screenshot%202025-10-02%20182801.png)
+
+## 4. For each of the four categories, what program has the most total hours of global viewership?
+
+```{r}
+  library(stringr)
+  library(dplyr)
+  library(DT)
+GLOBAL_TOP_10 |>
+select(category, show_title, season_title, weekly_hours_viewed) |>
+group_by(category)|>
+filter(weekly_hours_viewed==max(weekly_hours_viewed)) |>
+format_titles() |>
+datatable(options = list(searching = FALSE, info = FALSE)) 
+
+```
+
+These are the 4 programs at the top of their respective categories <br />
+
+## 5. Which TV show had the longest run in a country’s Top 10? How long was this run and in what country did it occur?
+
+```{r}
+  COUNTRY_TOP_10 |>
+  select(country_name,category,show_title,season_title,cumulative_weeks_in_top_10)|>
+  filter(cumulative_weeks_in_top_10==max(cumulative_weeks_in_top_10))|>
+  filter(category=="TV") |>
+  format_titles() |>
+  datatable(options = list(searching = FALSE, info = FALSE))
+```
+
+The TV show that had the longest run in a country's top 10 is named ***Money Heist***. The it stayed in the top 10 for 127 cumulative weeks, and occurred in Pakistan
+
+![](images/Screenshot%202025-10-02%20182703.png)
+
+## 6. Netflix provides over 200 weeks of service history for all but one country in our data set. Which country is this and when did Netflix cease operations in that country?
+
+```{r}
+COUNTRY_TOP_10 |>
+group_by(country_name)|>
+summarize(weekcount=n_distinct(week))|>
+filter(weekcount==min(weekcount)) |> 
+format_titles() |>
+datatable(options = list(searching = FALSE, info = FALSE))  
+
+COUNTRY_TOP_10 |>
+group_by(country_name)|>
+filter(country_name=="Russia")|>
+filter(week==max(week)) |> 
+format_titles() |>
+datatable(options = list(searching = FALSE, info = FALSE)) 
+
+```
+
+The country that has only 35 weeks of having Netflix services is Russia. From what I can observe Netflix has stopped operating in 02/27/2022
+
+## 7. What is the total viewership of the TV show Squid Game? Note that there are three seasons total and we are looking for the total number of hours watched across all seasons.
+
+```{r}
+GLOBAL_TOP_10|>
+  select(show_title,weekly_views,category)|>
+  filter(show_title=="Squid Game")|>
+  group_by(show_title,category) |>
+  summarize(totalview=sum(weekly_views,na.rm = TRUE))|>
+  format_titles() |>
+  datatable(options = list(searching = FALSE, info = FALSE))
+```
+
+Across all seasons, the TV show Squid Game has a total viewership of 396,900,000
+
+![](images/Screenshot%202025-10-02%20182608.png)
+
+## 8. The movie Red Notice has a runtime of 1 hour and 58 minutes. Approximately how many views did it receive in 2021? Note that Netflix does not provide the weekly_views values that far back in the past, but you can compute it yourself using the total view time and the runtime.
+
+```{r}
+GLOBAL_TOP_10|>
+  mutate(`Hour_viewed_(minutes)` = round(60 * weekly_hours_viewed)) |>
+  group_by(show_title)|>
+  filter(show_title=="Red Notice")|>
+  filter(year(week)==2021)|>
+  # stated that runtime of red notice is 1hr and 58min == 118min
+  summarise(year_view=round((sum(`Hour_viewed_(minutes)`,na.rm = TRUE)/118)))|>
+  format_titles() |>
+  datatable(options = list(searching = FALSE, info = FALSE))
+```
+
+***Red Notice*** was viewed approximately 201,732,203 times in 2021 <br />
+
+![](images/Screenshot%202025-10-02%20182306.png)
+
+## 9. How many Films reached Number 1 in the US but did not originally debut there? That is, find films that first appeared on the Top 10 chart at, e.g., Number 4 but then became more popular and eventually hit Number 1? What is the most recent film to pull this off?
+
+```{r}
+COUNTRY_TOP_10|>
+  group_by(show_title)|>
+  mutate(weekly_rank,toprank=weekly_rank==1)|>
+  mutate(debutTR=(toprank==TRUE)&(week==min(week)))|>
+  filter(toprank==TRUE,debutTR==FALSE,country_name=="United States",category=="Films")|>
+  format_titles() |>
+  datatable(options = list(searching = FALSE, info = FALSE))
+```
+
+130 Films reached Number 1 in the US but did not originally debut there. KPop Demon Hunters is the most recent film to pull this off.
+
+![](images/Screenshot%202025-10-02%20182157.png)\
+<br /> <br />
+
+## 10. Which TV show/season hit the top 10 in the most countries in its debut week? In how many countries did it chart?
+
+```{r}
+COUNTRY_TOP_10|>
+  group_by(show_title)|>
+  select(country_name,week,category,weekly_rank,show_title,season_title,cumulative_weeks_in_top_10)|>
+  mutate(weekly_rank,top_ten=(weekly_rank>=1 & weekly_rank<=10))|>
+  mutate(debut_top_ten=(top_ten==TRUE)&(week==min(week)))|>
+  filter(debut_top_ten==TRUE,category=="TV")|>
+  summarize(countries_charted = n_distinct(country_name),debut_top_10 = TRUE) |>
+  arrange(desc(countries_charted)) |>
+  format_titles() |>
+  datatable(options = list(searching = FALSE, info = FALSE))
+```
+
+Emily in Paris has charted in most countries around the world in its debut week of 94 different countries <br />
+
+![](images/Screenshot%202025-10-02%20182104.png)
+
+# Task 5 :Write a press release promoting season 5 of Stranger Things. Be sure to include a catchy headline.
+
+Netflix will release the fifth and final season of its hit show Stranger Things at the end of 2025. In preparation for the release, prepare a press release highlighting the broad impact of the previous four seasons. Your press release should refer to both the total viewership, the length of popularity (how many weeks in the top 10) and the multinational appeal of previous seasons. You should also compare the impact of Stranger Things to other popular English-language TV shows to give a sense of its success. <br />
+
+```{r}
+library(DT)
+library(tidyverse)
+library(dplyr)
+library(stringr)
+library(lubridate)
+library(ggplot2)
+
+GLOBAL_TOP_10|>
+  mutate(season_title=ifelse(is.na(season_title)& show_title=="Stranger Things","Stranger Things 1",season_title))|>
+  filter(show_title=="Stranger Things")|>
+  group_by(season_title)|>
+  summarize(
+    total_week_in_top10=sum(cumulative_weeks_in_top_10,na.rm=TRUE),
+    total_hours_viewed    = sum(weekly_hours_viewed, na.rm = TRUE)
+    )|>
+  format_titles() |>
+  datatable(options = list(searching = FALSE, info = FALSE))
+#cumulative_weeks_in_top_10 graph
+GLOBAL_TOP_10 |>
+  filter(show_title == "Stranger Things") |>
+  mutate(season_title = ifelse(is.na(season_title), "Stranger Things 1", season_title)) |>
+  group_by(season_title, week) |>
+  ggplot(aes(x = week, y = cumulative_weeks_in_top_10, color = season_title)) +
+  geom_line(size = 1) +
+  labs(
+    title = "cumulative_weeks_in_top_10 of Stranger Things by Season",
+    x = "Week",
+    y = "cumulative_weeks_in_top_10",
+    color = "Season"
+  ) +
+  theme_minimal()
+stranger <-GLOBAL_TOP_10|>
+  filter(show_title=="Stranger Things")|>
+  group_by(week)|>
+  summarise((total_week_viewed=sum(weekly_hours_viewed,na.rm=TRUE)))|>
+  arrange(week)
+colnames(stranger)<-c("Week","total_hours_viewed_in_a_week")
+
+GLOBAL_TOP_10 |>
+  filter(show_title == "Stranger Things") |>
+  group_by(week) |>
+  arrange(week)|>
+  ggplot(aes(x = week, y = weekly_hours_viewed)) +
+  geom_line(size = 1) +
+  labs(
+    title = "weekly_hours_viewed of Stranger Things",
+    x = "Week",
+    y = "weekly_hours_viewed"
+  ) +
+  theme_minimal()
+
+
+GLOBAL_TOP_10 |>
+  filter(show_title == "Stranger Things") |>
+  mutate(season_title = ifelse(is.na(season_title), "Stranger Things 1", season_title)) |>
+  group_by(season_title, week) |>
+  ggplot(aes(x = week, y = weekly_hours_viewed, color = season_title)) +
+  geom_line(size = 1) +
+  labs(
+    title = "weekly_hours_viewed of Stranger Things by Season",
+    x = "Week",
+    y = "weekly_hours_viewed",
+    color = "Season"
+  ) +
+  theme_minimal()
+#graphs look strange  because recorded data of stranger things n=20
+```
+
+## **Vecna commands the world's gaze : Stranger Things Season 5 Prepares to Captivate the Globe** <br />
+
+Vecna has the world in his grip, and fans everywhere are powerless to look away. Stranger Things Season 5 arrives at the end of 2025 after Season 4 that dominated the Top 10 across more countries than any previous season, with peak weekly hours viewed skyrocketing as audiences everywhere watched. Season 4’s unprecedented cumulative weeks in the Top 10 proved the series’ lasting global appeal, and as Hawkins faces its final battle, the world prepares for the epic conclusion to a phenomenon that has captured hearts and screens across the globe. <br /> *Stanger Things* across its four seasons has grossed **2,967,980,000** hours viewed internationally, and spent an astonishing **366** weeks cumulative weeks in Netflix's top 10 globally. As season 5 approaches, this record setting run emphasizes the investment audiences have in Eleven and her friends in the final chapter of their stories. See you guys at Hawkins !
+
+![](images/Screenshot%202025-10-02%20181745.png)
+
+# Task 6: Netflix in India Press Release
+
+Write a press release touting the success of Netflix in India and highlighting recent subscriber growth in the region. Be sure to include a catchy headline. <br />
+
+```{r}
+library(DT)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+
+
+COUNTRY_TOP_10 %>%
+  filter(country_name == "India") |>
+  group_by(week)|>
+  summarise(total_cumulative_weeks = sum(cumulative_weeks_in_top_10, na.rm = TRUE)) |>
+  arrange(week) |>
+  mutate(ma_4week = stats::filter(total_cumulative_weeks, rep(1/4, 4), sides = 1)) |>
+  ggplot(aes(x = week)) +
+  geom_line(aes(y = total_cumulative_weeks), color = "red", size = 1.2) +
+  geom_line(aes(y = ma_4week), color = "blue", size = 1.2) +  # MA line
+  labs(
+    title = "Netflix Engagement Growth in India: Cumulative Weeks in Top 10 (with 4-week MA)",
+    x = "Week",
+    y = "Total Cumulative Weeks in Top 10"
+  ) +
+  theme_minimal() 
+
+
+#dt for global inner join with country is too big, had to make it dataframe
+india_global <-COUNTRY_TOP_10 |>
+  filter(country_name == "India") |>
+  inner_join(
+    GLOBAL_TOP_10,
+    by = c("show_title","week"),
+    suffix = c("_india", "_global"),
+    relationship = "many-to-many"  
+  ) |>
+  select(
+    show_title,
+    week,
+    category_india,
+    category_global,
+    weekly_hours_viewed,
+    runtime,
+    weekly_views
+  )
+india_global
+india_global_cumulative<- india_global|>
+  filter(!is.na(weekly_views))|>
+  group_by(week)|>
+  summarise(total_cumulative_weekly_views= sum(weekly_views, na.rm = TRUE))|>
+  arrange(week)|>
+  mutate(cum_views = cumsum(total_cumulative_weekly_views))
+
+  ma_4week2 = stats::filter(india_global_cumulative$total_cumulative_weekly_views, rep(1/4, 4), sides = 1)
+
+ggplot(india_global_cumulative, aes(x = week))+
+  geom_line(aes(y = total_cumulative_weekly_views),color="red",size=1.2) +  
+  geom_line(aes(y = ma_4week2), color="blue", size=1.2) +
+    labs(
+    title = "India weekly views by week",
+    x="Week",
+    y="Hours viewed by week"
+  )+
+  theme_minimal()
+  
+
+ggplot(india_global_cumulative, aes(x = week, y = cum_views)) +
+  geom_line(color = "darkblue", size = 1.2) +
+  labs(
+    title = "Cumulative Netflix Views in India",
+    x = "Week",
+    y = "Cumulative Views"
+  ) +
+  theme_minimal()
+```
+## From Mumbai to Millions: Netflix India Surges to New Heights <br /> 
+Analysis of Netflix's time series reveal total weekly viewing hours surge of over 150% from mid-2023 and the peak acheived in early 2025. This explosive growth in engagement translate to a significant increase in our active and engaged customer base, suggesting the strategic focus on localized content is yielding exponential returns. India is one of the most populous country, and provides an opportunity for Netflix and a chance for Hindi content to flourish. <br />
+While tracking the Cumulative Weeks in Top 10, smoothed by a 4-week moving average, shows a clear upward trend since 2022. This shows that the growth of the platforms success in consistently delivering a broad and diverse catalouge that resonates with local audiences. <br />
+The long-term growth indicated by the viewing hours moving average is decisively upward. The consistently rising baseline for engagement, paired with increasing cumulative weeks in the Top 10, reflects strong demand from Indian viewers for Netflix’s diverse content. <br />
+
+# Task 7: 3rd Press Release<br /> 
+## Netflix decodes global viewer: Data reveals UNQUENCHABLE appetite for ROMANCE!... and sequels
+By analyzing the words most frequently used in the titles that reached the Top 10 globally, Netflix has isolated three core areas of viewer demand: <br />
+1. ***The enduring power of love:*** The word "love" ranked #1 with 229 occurrences in top 10 titles, demonstrating a massive year round appetite for romance, rom-coms, and dramas <br />
+2. ***The Power of Sequels:*** Believe it or not the #2 ranked word is "2" with 208 occurrences. This can confirm that audiences place high value on established franchises. Sequels, second seasons, part 2s, carry recognition from fans from the original content, while carrying significantly less risk for Netlfix.<br />
+3. ***The Quest for Relatability:*** The word "Life" ranked third with 107 occurrences, signaling a strong demand for character-driven narratives. These titles—spanning biopics and documentaries—appeal to viewers seeking emotional depth and stories that resonate with universal human experiences.<br />
+4. ***Holiday Guarantee:*** The keyword "Christmas" (85 occurrences) confirms its powerful, cyclical role in content programming. While performance may fluctuate year-to-year, holiday-themed content reliably peaks in engagement near the end of every year, making it a cornerstone of Q4 scheduling <br />
+5. ***Absolute Cinema :*** The keyword "Movie" (85 occurrences) highlights the continued importance of the film format. Shows the viewers want for a complete, high quality single sitting experience <br />
+
+
+
+```{r}
+library(tidytext)
+
+
+pop_word <- GLOBAL_TOP_10 |>
+  select(show_title) |>
+  unnest_tokens(word, show_title) |>
+  filter(!word %in% stop_words$word)|>
+  count(word, sort = TRUE)
+pop_word|>
+  format_titles() |>
+  datatable(options = list(searching = FALSE, info = FALSE))
+
+top_10_words <- pop_word |> 
+  slice_max(n, n = 10)
+ggplot(top_10_words, aes(x = reorder(word, n), y = n, fill = word)) +
+  geom_col() +
+  coord_flip() +  # horizontal bars make it easier to read
+  labs(
+    title = "Top 10 Words in Netflix Show Titles",
+    x = "Word",
+    y = "Frequency"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+word_data <- GLOBAL_TOP_10 |>
+  select(week, show_title) |>
+  mutate(title_lower = tolower(show_title)) |>
+  unnest_tokens(word, title_lower) |>
+  filter(!word %in% stop_words$word)
+# Count total word frequency across all weeks
+keyword_freq <- word_data |>
+  group_by(word)|>
+  summarise(total_count = n(), .groups = "drop") |>
+  arrange(desc(total_count))
+# Take top 5 words based on total count
+top_words <- keyword_freq$word[1:5]
+# Count frequency per week for those top words
+word_weekly <- word_data |>
+  filter(word %in% top_words) |>
+  group_by (week, word) |>
+  summarise(freq = n())
+
+word_weekly <- word_weekly %>%
+  mutate(color = case_when(
+    word == top_words[1] ~ "red",
+    word == top_words[2] ~ "blue",
+    word == top_words[3] ~ "green",
+    word == top_words[4] ~ "orange",
+    word == top_words[5] ~ "purple"
+  ))
+
+ggplot(word_weekly, aes(x = week, y = freq, color = color)) +
+  geom_line(size = 1) +
+  facet_wrap(~ word, scales = "free_y") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  guides(color = "none")  
+
+```
+
