@@ -1,0 +1,389 @@
+---
+title: "Mini-Project #03: Visualizing and Maintaining the Green Canopy of NYC"
+author: "DavidZhai"
+format: 
+  html: 
+    theme: flatly
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+execute:
+  enabled: true
+---
+# Task 1 :Download NYC City Council District Boundaries  <b/>
+```{r,message=FALSE, warning=FALSE}
+
+get_nyc_council_boundaries <- function() {
+  if (!require(sf)) install.packages("sf")
+  library(sf)
+  
+  # Directories and URLs
+  data_dir <- "data/mp03"
+  if (!dir.exists(data_dir)) dir.create(data_dir, recursive = TRUE)
+  
+  zip_url  <- "https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/city-council/nycc_25c.zip"
+  zip_file <- file.path(data_dir, "nycc_25c.zip")
+  unzip_dir <- file.path(data_dir, "nycc_25c")
+  
+  # Download ZIP if missing
+  if (!file.exists(zip_file)) {
+    message("Downloading NYC City Council boundaries...")
+    download.file(zip_url, destfile = zip_file, mode = "wb")
+  }
+  
+  # Unzip if directory doesn't exist
+  if (!dir.exists(unzip_dir)) {
+    message("Unzipping shapefile...")
+    unzip(zip_file, exdir = unzip_dir)
+  }
+  
+  # Recursive search for shapefile
+  shp_file <- list.files(unzip_dir, pattern = "\\.shp$", full.names = TRUE, recursive = TRUE)
+  if (length(shp_file) == 0) stop("No shapefile found in the unzipped directory!")
+  
+  # Read shapefile
+  data <- st_read(shp_file, quiet = TRUE)
+  
+  # Transform to WGS84
+  data <- st_transform(data, crs = "WGS84")
+  
+  return(data)
+}
+```
+
+# Task 2: Download Tree Points <b/>
+```{r,message=FALSE, warning=FALSE}
+get_tree_points <- function(limit = 50000, data_dir = "data/mp03") {
+  # Ensure directory exists
+  if (!dir.exists(data_dir)) {
+    dir.create(data_dir, recursive = TRUE, showWarnings = FALSE)
+  }
+  
+  # Base API endpoint for GeoJSON (SODA2) – dataset id hn5i‑inap
+  base_url <- "https://data.cityofnewyork.us/resource/hn5i-inap.geojson"
+  
+  # Prepare for pagination
+  offset <- 0
+  i <- 1
+  all_files <- list()
+  
+  repeat {
+    # Construct file name for this chunk
+    file_name <- file.path(data_dir, sprintf("trees_chunk_%03d.geojson", i))
+    
+    # Download only if missing
+    if (!file.exists(file_name)) {
+      cat("Downloading trees, offset =", offset, "...\n")
+      req <- request(base_url) |>
+        req_url_query(`$limit`  = limit,
+                      `$offset` = offset)
+      resp <- req_perform(req)
+      body <- resp_body_string(resp)
+      writeLines(body, file_name)
+    }
+    
+    # Read a preview to decide when to stop
+    preview_sf <- st_read(file_name, quiet = TRUE)
+    all_files <- c(all_files, file_name)
+    
+    # If fewer than limit rows returned → reached end
+    if (nrow(preview_sf) < limit) {
+      cat("Last chunk retrieved, rows =", nrow(preview_sf), "\n")
+      break
+    }
+    
+    offset <- offset + limit
+    i <- i + 1
+  }
+  
+  # Combine all chunks into one sf object
+  tree_sf <- map_dfr(all_files, st_read, quiet = TRUE)
+  
+  # (Optional) Reproject if necessary — but will leave in original CRS for now
+  tree_sf <- st_transform(tree_sf, st_crs = st_crs(tree_sf))
+  
+  return(tree_sf)
+}
+
+```
+
+
+```{r,message=FALSE, warning=FALSE}
+library(sf)
+library(tidyverse)
+library(httr2)
+library(dplyr)
+library(stringr)
+library(purrr)
+library(DT)
+
+NYC_TREES <- get_tree_points(limit = 50000)
+NYC_DISTRICTS <- get_nyc_council_boundaries()
+```
+
+
+
+# task 3: Plot All Tree Points <b/>
+```{r,message=FALSE, warning=FALSE}
+ggplot() +
+    geom_sf(
+        data = NYC_DISTRICTS,
+        fill = "white",
+        color = "black",
+        linewidth = 0.2
+    ) +
+    geom_sf(
+    data = NYC_TREES,
+    color = "darkgreen",
+    alpha = 0.005,
+    size = 0.005
+    ) +
+    labs(
+        title = "NYC Tree Locations",
+        caption = "MP03 – STA 9750"
+    ) +
+    theme_minimal()
+
+```
+# Task 4: District-Level Analysis of Tree Coverage <b/>
+<b/>
+```{r,message=FALSE, warning=FALSE}
+NYC_TREES_JOINED <- st_join(
+  NYC_TREES,  
+  NYC_DISTRICTS,      
+  join = st_within    
+)
+NYC_TREES_JOINED<-NYC_TREES_JOINED|>
+mutate(Borough = case_when(
+    CounDist >= 1  & CounDist <= 10 ~ "Manhattan",
+    CounDist >= 11 & CounDist <= 18 ~ "Bronx",
+    CounDist >= 19 & CounDist <= 32 ~ "Queens",
+    CounDist >= 33 & CounDist <= 48 ~ "Brooklyn",
+    CounDist >= 49 & CounDist <= 51 ~ "Staten Island",
+    TRUE ~ NA_character_
+  ))
+
+```
+# 1. Which council district has the most trees?<b/>  
+
+ <b/>
+```{r,message=FALSE, warning=FALSE}
+
+trees_per_district <- NYC_TREES_JOINED |>
+  st_drop_geometry() |>  
+  group_by(CounDist,Borough) |>
+  summarise(tree_count = n()) |>
+  arrange(desc(tree_count))
+
+trees_per_district <- trees_per_district |>
+  rename(`tree count` = tree_count)
+
+trees_per_district|>
+  datatable(options = list(searching = FALSE, info = FALSE))
+```
+The council district with the most tree is council district # `r trees_per_district$CounDist[1]`, in the borough of `r trees_per_district$Borough[1]` with the tree count of  70965 <b/>  
+
+ <b/>
+# 2. Which council district has the highest density of trees? The Shape_Area column from the district shape file will be helpful here. <b/>  
+
+<b/>
+```{r,message=FALSE, warning=FALSE}
+district_density <- NYC_TREES_JOINED |>
+  st_drop_geometry() |>
+  group_by(CounDist, Borough, Shape_Area) |>
+  summarise(tree_count = n()) |>
+  mutate(density = tree_count / Shape_Area) |>
+  arrange(desc(density))
+district_density$density <- round(district_density$density, 6)
+
+district_density <- district_density |>
+  rename(`tree count` = tree_count)
+district_density <- district_density |>
+  rename(`Shape Area` = Shape_Area)
+
+
+
+district_density|>
+  datatable(options = list(searching = FALSE, info = FALSE))
+```
+The council district with the most tree density is council district # `r district_density$CounDist[1]`, in the borough of `r district_density$Borough[1]`, with `r district_density$density[1]` trees per square meters <b/>  
+
+<b/>
+# 3. Which district has highest fraction of dead trees out of all trees? <b/>    
+
+
+
+<b/>
+```{r,message=FALSE, warning=FALSE}
+dead_fraction <- NYC_TREES_JOINED |>
+  st_drop_geometry() |>
+  group_by(CounDist,Borough) |>
+  summarise(fraction_dead = mean(tpcondition == "Dead", na.rm = TRUE)) |>
+  arrange(desc(fraction_dead))
+
+dead_fraction <- dead_fraction |>
+  rename(`fraction dead` = fraction_dead)
+
+dead_fraction$`fraction dead` <- round(dead_fraction$`fraction dead`, 4)
+dead_fraction|>
+  datatable(options = list(searching = FALSE, info = FALSE))
+```
+The council district with the most tree density is council district # `r dead_fraction$CounDist[1]`, in the borough of `r dead_fraction$Borough[1]`, with  14.26% of their trees dead <b/>  
+
+<b/>
+# 4. What is the most common tree species in Manhattan? <b/>  
+
+
+
+<b/>
+```{r,message=FALSE, warning=FALSE}
+most_common_manhattan <- NYC_TREES_JOINED |>
+  filter(Borough == "Manhattan") |>
+  st_drop_geometry() |>
+  group_by(genusspecies) |>
+  summarise(count = n()) |>
+  arrange(desc(count)) 
+most_common_manhattan|>
+  datatable(options = list(searching = FALSE, info = FALSE))
+
+```
+The most common tree species in Manhattan is the `r most_common_manhattan$genusspecies[1]` with `r most_common_manhattan$count[1]`  `r most_common_manhattan$genusspecies[1]` trees. <b/>  
+
+<b/>
+# 5. What is the species of the tree closest to Baruch’s campus? <b/>  
+
+<b/>  
+
+```{r,message=FALSE, warning=FALSE}
+new_st_point <- function(lat, lon) {
+  st_sfc(st_point(c(lon, lat))) |>
+    st_set_crs(4326)
+}
+
+baruch_point <- new_st_point(40.7401, -73.9776)
+
+NYC_TREES_JOINED <- NYC_TREES_JOINED |>
+  mutate(distance_to_baruch = st_distance(geometry, baruch_point))
+
+closest_tree <- NYC_TREES_JOINED |>
+  st_drop_geometry() |>
+  slice_min(distance_to_baruch, n = 5)
+closest_tree|>
+  select(genusspecies, distance_to_baruch)|>
+  datatable(options = list(searching = FALSE, info = FALSE))
+```
+the species of the tree closest to Baruch’s campus is `r closest_tree$genusspecies[1]` being only `r closest_tree$distance_to_baruch[1]` meters away <b/>  
+
+<b/>
+Task 5: NYC Parks Proposal  
+
+# NYC Parks Department Proposal: District 27 High-Risk Tree Maintenance  
+<b/>
+District 27 contains a significant number of trees rated as high-risk according to the NYC Forestry Management System. These trees pose potential hazards to pedestrians, vehicles, and nearby structures, particularly during storms or high-wind events. The proposed project aims to improve public safety, reduce infrastructure damage, and maintain urban canopy coverage by performing targeted inspections, pruning, stabilization, and, where necessary, removal and replacement of these high-risk trees. By focusing efforts on the most vulnerable trees, crews can prioritize areas with the greatest safety impact.  
+<b/>
+The project will focus on all trees with a risk rating of seven or higher. Approximately 150 high-risk trees will undergo detailed inspection and maintenance, including structural pruning and stabilization with cabling or bracing where appropriate. Around 25 trees that cannot be safely maintained will be removed, and 30 new trees will be planted to replace removed trees or residual stumps, ensuring continued canopy coverage. An ongoing monitoring program will track tree conditions post-maintenance, particularly in areas with high pedestrian activity, near schools, parks, and transit hubs.  
+
+<b/>
+
+```{r,message=FALSE, warning=FALSE}
+NYC_TREES_JOINED |>
+  filter(!is.na(CounDist))|>
+  filter(!is.na(riskrating)) |>
+  filter(riskrating>=7)-> risk_trees
+
+ggplot() +
+  geom_sf(
+    data = NYC_DISTRICTS,
+    fill = "white",
+    color = "black",
+    linewidth = 0.2
+  ) +
+  geom_sf(
+    data = risk_trees,           
+    aes(color = as.numeric(riskrating)),
+    alpha = 0.05,                     
+    size = 0.05
+  ) +
+  scale_color_gradientn(colors = c("yellow", "orange", "red")) +
+  labs(
+    title = "High-Risk Trees Across NYC Districts",
+    caption = "Source: NYC Parks ForMS",
+    color = "Risk Rating"
+  ) +
+  theme_minimal()
+```
+
+
+District 27’s trees have the highest mean risk rating among nearby districts:  
+<b/>
+```{r,message=FALSE, warning=FALSE}
+avg_risk_by_district <- risk_trees |>
+  st_drop_geometry() |>
+  mutate(riskrating_num = as.numeric(riskrating)) |>  
+  group_by(CounDist,Borough) |>
+  summarise(avg_risk = mean(riskrating_num)) |>       
+  arrange(desc(avg_risk))
+
+avg_risk_by_district|>
+  datatable(options = list(searching = FALSE, info = FALSE))
+
+
+ggplot(NYC_TREES_JOINED |> filter(CounDist == 27), aes(x = as.numeric(riskrating))) +
+  geom_histogram(binwidth = 1, fill = "orange", color = "black") +
+  labs(title = "Distribution of Tree Risk Ratings in District 27",
+       x = "Risk Rating",
+       y = "Number of Trees")
+
+compare_districts <- avg_risk_by_district |>
+  filter(CounDist %in% c(27,2,17,35,25, 30, 32,21,39,40))  
+
+ggplot(compare_districts, aes(x = factor(CounDist), y = avg_risk)) +
+  geom_col(aes(fill = ifelse(CounDist == 27, "District 27", "Other Districts"))) +
+  scale_fill_manual(values = c("District 27" = "red", "Other Districts" = "grey70")) +
+  labs(
+    title = "Average Tree Risk Ratings by District",
+    subtitle = "Highlighting District 27",
+    x = "Council District",
+    y = "Average Risk Rating",
+    fill = ""
+  ) +
+  theme_minimal()
+
+```
+A zoomed-in map of District 27 will illustrate the location and condition of all trees, with high-risk trees highlighted in red, moderate-risk trees in orange, and low-risk trees in yellow. This visualization will allow maintenance crews to identify clusters of high-risk trees, prioritize immediate interventions, and plan routes efficiently, while providing transparency to residents and stakeholders.  
+
+<b/>
+```{r,message=FALSE, warning=FALSE}
+
+district27_risk <- NYC_TREES_JOINED|>
+  filter(CounDist == 27, !is.na(riskrating)) |>
+  mutate(riskrating_num = as.numeric(riskrating))
+ggplot() +
+  geom_sf(data = NYC_DISTRICTS |> filter(CounDist == 27), fill = "white", color = "black") +
+  geom_sf(data = district27_risk, aes(color = riskrating_num), size = 0.5, alpha = 0.7) +
+  scale_color_gradient(low = "yellow", high = "red") +
+  labs(title = "High-Risk Trees in District 27",
+       color = "Risk Rating") +
+  theme_minimal()
+
+district17_risk <- NYC_TREES_JOINED|>
+  filter(CounDist == 17, !is.na(riskrating)) |>
+  mutate(riskrating_num = as.numeric(riskrating))
+ggplot() +
+  geom_sf(data = NYC_DISTRICTS|>filter(CounDist == 17), fill = "white", color = "black") +
+  geom_sf(data = district17_risk, aes(color = riskrating_num), size = 0.5, alpha = 0.7) +
+  scale_color_gradient(low = "yellow", high = "red") +
+  labs(title = "High-Risk Trees in District 17",
+       color = "Risk Rating") +
+  theme_minimal()
+
+```
+District 27’s priority is further supported by a quantitative comparison with nearby districts. While other districts may have more trees overall, District 27 has a higher concentration of hazardous trees per area, making it the district with the most urgent need for targeted maintenance. Supporting visualizations, such as a bar chart comparing mean risk ratings across districts and a histogram of risk ratings within District 27, emphasize the urgency and scale of the project.  
+<b/>
+Implementing this high-risk tree maintenance program in District 27 will reduce safety risks, prevent property damage, and sustain urban greenery. By focusing on the most vulnerable trees, NYC Parks can deploy resources strategically, ensuring maximum impact for public safety and environmental quality. This proactive, data-driven approach demonstrates a commitment to both community well-being and responsible urban forestry management.  
+<b/>
+From Council member  
+<b/>
+DZ
