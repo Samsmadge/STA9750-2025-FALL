@@ -1,0 +1,507 @@
+---
+title: "Mini-Project #04: Just the Fact(-Check)s, Ma’am!"
+author: "DavidZhai"
+format: 
+  html: 
+    theme: flatly
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+execute:
+  enabled: true
+---
+#  Task 1: Download CES Total Nonfarm Payroll  
+<b/>
+```{r,echo=FALSE,warning=FALSE, message=FALSE}
+library(httr2)
+library(rvest)
+library(dplyr)
+library(stringr)
+library(lubridate)
+library(tidyr)
+library(purrr)
+library(DT)
+
+url <- "https://data.bls.gov/pdq/SurveyOutputServlet"
+
+req <- request(url) |>
+  req_method("POST") |>
+  req_body_form(
+    request_action = "get_data",
+    reformat = "true",
+    from_results_page = "true",
+    from_year = "1979",
+    to_year = "2025",
+    "Go.x" = "17",
+    "Go.y" = "13",
+    initial_request = "false",
+    data_tool = "surveymost",
+    series_id = "CES0000000001",
+    original_annualAveragesRequested = "false"
+  )
+
+resp <- req_perform(req)
+
+page <- resp |> resp_body_html()
+
+# find the table with the "Year" column
+tbl <- page |>
+  html_table(fill = TRUE) |>
+  purrr::keep(~ "Year" %in% names(.)) |>
+  purrr::pluck(1)
+
+ces_clean <- tbl |>
+  rename(year = Year) |>
+  pivot_longer(-year, names_to = "month", values_to = "level") |>
+  mutate(
+    date = ymd(sprintf("%s-%02d-01", year, match(month, month.abb))),
+    level = as.numeric(str_replace(level, ",", ""))
+  ) |>
+  filter(!is.na(level), date <= ymd("2025-06-01")) |>
+  select(date, level) |>
+  arrange(date)
+
+ces_clean|>
+  datatable(options = list(searching = FALSE, info = FALSE))
+
+```
+
+# Task 2: Download CES Revisions Tables
+```{r,echo=FALSE,warning=FALSE, message=FALSE}
+library(httr2)
+library(rvest)
+library(tidyverse)
+library(lubridate)
+
+
+bls_req <- function() {
+  request("https://www.bls.gov/web/empsit/cesnaicsrev.htm") |>
+    req_user_agent("Mozilla/5.0") |>        # BLS blocks R default UA
+    req_headers("Accept-Language" = "en-US,en;q=0.8")
+}
+
+
+extract_year <- function(year) {
+
+  page <- bls_req() |> 
+    req_perform() |> 
+    resp_body_html()
+
+  css_id <- paste0("#", year)
+
+  node <- page |> html_element(css_id)
+
+  if (inherits(node, "xml_missing")) {
+    stop(paste("Table not found for year", year))
+  }
+
+  tbl <- node |>
+    html_element("tbody") |>
+    html_table(header = FALSE) |>
+    as_tibble()
+
+  # First 12 rows = Jan–Dec
+  tbl <- tbl |> 
+    slice(1:12) |> 
+    select(
+      month = 1,
+      original = 3,
+      final = 5
+    )
+
+  tbl |> mutate(
+    year = year,
+    date = ym(paste(year, month)),
+    revision = final - original
+  ) |> 
+    select(date, original, final, revision)
+}
+
+
+
+years <- 1979:2025
+
+data_all <- list_rbind(map(years, extract_year))
+
+
+
+final_df <- data_all |>
+  filter(date <= ymd("2025-06-01"))
+
+final_df|>
+  datatable(options = list(searching = FALSE, info = FALSE))
+
+data <- final_df %>%
+  full_join(ces_clean, by = "date")
+data|>
+  datatable(options = list(searching = FALSE, info = FALSE))
+```
+# Task 3: Data Exploration and Visualization
+```{r,echo=FALSE,warning=FALSE, message=FALSE}
+data <- final_df %>%
+  full_join(ces_clean, by = "date")
+data|>
+  datatable(options = list(searching = FALSE, info = FALSE))
+```
+
+```{r,echo=FALSE,warning=FALSE, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(scales)
+
+
+data <- data |> mutate(date = as_date(date))
+
+data2 <- data |>
+  mutate(
+    year = year(date),
+    decade = paste0(floor(year / 10) * 10, "s"),
+    month = month(date, label = TRUE, abbr = TRUE),
+    abs_revision = abs(revision),
+    rel_revision = ifelse(final == 0, NA, abs_revision / final),        
+    pct_revision = ifelse(level == 0, NA, (revision / level) * 100)    
+  )
+
+
+
+largest_pos <- data2 |> filter(revision == max(revision, na.rm = TRUE)) |>
+  select(date, revision, original, final, level)
+
+
+largest_neg <- data2 |> filter(revision == min(revision, na.rm = TRUE)) |>
+  select(date, revision, original, final, level)
+
+
+mean_abs_rev <- mean(data2$abs_revision, na.rm = TRUE)
+
+
+median_abs_pct_level <- median(abs(data2$pct_revision), na.rm = TRUE)
+
+
+frac_positive_overall <- mean((data2$revision > 0), na.rm = TRUE)
+
+
+year_highest_rel <- data2 |>
+  group_by(year) |>
+  summarise(mean_rel = mean(rel_revision, na.rm = TRUE), n = n()) |>
+  arrange(desc(mean_rel)) |>
+  slice(1)
+
+pos_by_year <- data2 |>
+  group_by(year) |>
+  summarise(frac_positive = mean(revision > 0, na.rm = TRUE),
+            mean_abs = mean(abs_revision, na.rm = TRUE),
+            mean_rel = mean(rel_revision, na.rm = TRUE),
+            n = n())
+
+month_stats <- data2 |>
+  group_by(month) |>
+  summarise(mean_rev = mean(revision, na.rm = TRUE),
+            mean_abs = mean(abs_revision, na.rm = TRUE),
+            mean_abs_pct = mean(abs(pct_revision), na.rm = TRUE),
+            n = n()) |>
+  arrange(match(month, month.abb))
+
+
+summary_table <- tibble(
+  Metric = c(
+    "Largest positive revision",
+    "Largest negative revision",
+    "Mean absolute revision (units)",
+    "Median absolute revision as % of level",
+    "Fraction of positive revisions overall",
+    "Year with highest mean relative revision"
+  ),
+  Value = c(
+    paste0(largest_pos$date, " (", largest_pos$revision, ")"),
+    paste0(largest_neg$date, " (", largest_neg$revision, ")"),
+    round(mean_abs_rev, 2),
+    paste0(round(median_abs_pct_level, 4), "%"),
+    round(frac_positive_overall, 3),
+    paste0(year_highest_rel$year, " (", round(year_highest_rel$mean_rel, 4), ")")
+  )
+)
+
+htmltools::tags$h3("Summary Statistics for CES Revisions (1979–2024)")
+
+summary_table |>
+  datatable(
+    options = list(
+      searching = FALSE,
+      info = FALSE,
+      paging = FALSE,
+      dom = 't',
+      ordering = FALSE
+    ),
+    rownames = FALSE
+  ) |>
+  formatStyle(columns = 1:2, `font-weight` = "bold")
+
+```
+
+```{r,echo=FALSE,warning=FALSE, message=FALSE}
+p1 <- ggplot() +
+  geom_line(data = data2, aes(x = date, y = level), size = 0.5) +
+  geom_point(
+    data = data2,
+    aes(
+      x = date,
+      y = level,
+      colour = factor(sign(revision)),
+      alpha  = rel_revision
+    ),
+    size = 0.8
+  ) +
+  scale_colour_manual(
+    values = c("-1" = "red", "0" = "grey50", "1" = "darkgreen"),
+    labels = c("-1" = "Negative rev", "0" = "Zero rev", "1" = "Positive rev"),
+    name = "Revision sign"
+  ) +
+  scale_alpha(range = c(0.15, 1), guide = "none") +
+  labs(
+    title = "CES Total Nonfarm Level Over Time (points colored by revision sign)",
+    y = "Level",
+    x = NULL
+  ) +
+  theme_minimal()
+
+p2 <- ggplot(data2, aes(x = date, y = revision)) +
+  geom_hline(yintercept = 0, color = "grey50") +
+  geom_line(alpha = 0.35) +
+  geom_smooth(method = "loess", span = 0.2, se = TRUE) +
+  labs(title = "CES revision (original -> final) over time", y = "Revision (thousands)", x = NULL) +
+  theme_minimal()
+
+p3 <- ggplot(data2, aes(x = month, y = revision)) +
+  geom_boxplot(outlier.size = 0.7) +
+  labs(title = "Distribution of monthly CES revisions by calendar month",
+       subtitle = "Check for months with systematically larger/smaller revisions",
+       y = "Revision (thousands)", x = NULL) +
+  theme_minimal()
+
+p4 <- ggplot(pos_by_year, aes(x = year)) +
+  geom_col(aes(y = frac_positive), fill = "steelblue", alpha = 0.8) +
+  geom_line(aes(y = mean_rel), colour = "darkred", size = 0.8) +
+  scale_y_continuous(
+    name = "Fraction positive (bars)",
+    labels = scales::percent_format(accuracy = 1),
+    sec.axis = sec_axis(~ ., name = "Mean relative revision (abs)", labels = scales::percent_format(accuracy = 0.1))
+  ) +
+  labs(title = "Yearly fraction of positive revisions and mean relative revision",
+       x = NULL) +
+  theme_minimal()
+
+print(p1)
+print(p2)
+print(p3)
+print(p4)
+```
+# Task 4: Statistical Inference  
+<b/>
+```{r,echo=FALSE,warning=FALSE, message=FALSE}
+library(infer)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(DT)
+library(broom)
+
+data <- data |> mutate(neg_rev = revision < 0)
+
+pre2000  <- data |> filter(year(date) < 2000)
+post2000 <- data |> filter(year(date) >= 2000)
+
+test1 <-prop_test(
+  post2000,
+  response = neg_rev,
+  success = "TRUE",   
+  p = mean(pre2000$neg_rev)
+)
+
+
+test2 <- t_test(
+  data,
+  response = revision,
+  mu = 0
+)
+
+data <- data |> 
+  mutate(date = as.Date(date),
+         post2020 = year(date) >= 2020)
+test3 <- data |> 
+  t_test(
+    response = revision,
+    explanatory = post2020,
+    order = c(FALSE, TRUE)
+  )
+
+test_table <- tibble(
+  Test = c(
+    "Fraction of negative revisions ↑ post-2000?",
+    "Mean revision significantly ≠ 0?",
+    "Mean revision ↑ post-2020?"
+  ),
+  Statistic = c(
+    round(test1$statistic, 4),
+    round(test2$statistic, 4),
+    round(test3$statistic, 4)
+  ),
+  P_value = c(
+    signif(test1$p_value, 4),
+    signif(test2$p_value, 4),
+    signif(test3$p_value, 4)
+  ),
+  Decision = c(
+    ifelse(test1$p_value < 0.05, "Reject H0", "Fail to Reject"),
+    ifelse(test2$p_value < 0.05, "Reject H0", "Fail to Reject"),
+    ifelse(test3$p_value < 0.05, "Reject H0", "Fail to Reject")
+  )
+)
+datatable(
+  test_table,
+  rownames = FALSE,
+  options = list(
+    searching = FALSE,
+    paging = FALSE,
+    info = FALSE,
+    dom = "t"
+  )
+) |>
+  formatStyle(
+    "Decision",
+    color = styleEqual(
+      c("Reject H0", "Fail to Reject"),
+      c("darkgreen", "darkred")
+    ),
+    `font-weight` = "bold"
+  ) |>
+  formatStyle(columns = 1:4, `font-size` = "14px")
+
+```
+# Task 5: Fact Checks of Claims about BLS
+<b/>
+## FACT CHECK 1 — Claim attributed to President Trump  
+<b/>
+“Head of the Bureau of Labor Statistics did the same thing just before the Presidential Election, when she lifted the numbers for jobs to an all time high … I then won the Election, anyway, and she readjusted the numbers downward, calling it a mistake, of almost one million jobs. … faked the Jobs Numbers before the Election to try and boost Kamala’s chances of Victory.”  
+<b/>
+Verdict: FALSE  
+<b/>
+The data show routine monthly revisions that are small relative to the level of employment, no evidence of systematic, near-1-million job “lift” immediately before an election attributable to BLS revisions, and the largest single revision in your dataset is much smaller in context and occurred for pandemic reasons.  
+<b/>
+Key evidence: 
+Largest positive revision: +437 (thousands) on 2021-11-01.  
+<b/>
+Largest negative revision: −672 (thousands) on 2020-03-01 (pandemic shock month).  
+<b/>
+
+Mean absolute revision (units): 56.9 (thousands).  
+<b/>
+
+Median absolute revision as % of level: 0.0326% (tiny relative to employment level).  
+<b/>
+
+Fraction of positive revisions overall: 0.57 (slightly more increases than decreases; not overwhelmingly biased one way).  
+<b/>
+
+These numbers show: (a) the biggest revisions are on the order of a few hundred thousand (pandemic-era outliers), not “almost one million” in a routine pre-election adjustment; (b) typical revisions are much smaller (mean absolute ≈ 57k); (c) revision magnitudes are small relative to the total employment level (median relative revision ≈ 0.03%).  
+<b/>  
+
+Visual evidence  
+<b/>
+Time series of revisions: shows monthly revisions from 1979 → 2025 with a blue LOESS trend. It reveals relatively small variation most of the time, with large spikes around the 2020 pandemic.  
+<b/>
+
+Boxplots by month: shows the distribution of monthly revisions by calendar month — boxes centered near zero for every month, meaning no calendar-month with consistent huge positive bias.  
+<b/>
+
+Hypothesis test(s) )
+
+Mean revision ≠ 0? test: statistic = 3.2594, p = 0.001185 → Reject H0 (there is a small but statistically detectable nonzero mean revision).  
+<b/>
+Interpretation: there is a small average revision (statistically nonzero), but statistical significance does not imply large magnitude — see median relative revision ≈ 0.0326%.  
+<b/>
+
+Fraction of negative revisions ↑ post-2000? statistic = 1.5364, p = 0.2152 → Fail to reject (no evidence of an increase in negative revisions after 2000).  
+<b/>
+
+Combining absolute levels + revisions  
+<b/>
+If “lifting the numbers to an all-time high so a candidate wins” were true we would expect:  
+<b/>
+
+Large, systematic positive revisions immediately after an election month (hundreds of thousands to millions), and a sharp negative revision later that exactly undoes the pre-election lift.  
+<b/>
+
+In reality: (a) largest single positive revision is +437k (2021-11) — large but not near 1,000k and not tied to a routine pre-election pattern; (b) most revisions are ~57k in magnitude and are tiny relative to total employment; (c) the large negative −672k revision is pandemic related (Mar 2020) and not an election-timed hidden correction. The time series plot shows the pandemic as the standout event; no recurring pre-election spike pattern appears.  
+<b/>
+
+Conclusion & Rating rationale  
+<b/>
+
+The claim that BLS “lifted” jobs by ~1 million before an election and then “readjusted” them later is not supported. The revision magnitudes and the timing evidence contradict the claim.  
+<b/>
+
+Politifact-style rating: False (not “Pants on Fire” because this looks like a large factual error/exaggeration, not supported by the revision magnitudes or patterns).  
+<b/>
+
+## FACT CHECK 2 — Claim attributed to Daniel Koh (paraphrase you provided)  
+<b/>
+“Nobody is faking numbers. Revisions happen all the time.”  
+<b/>
+Verdict: MOSTLY TRUE.  
+
+<b/>
+Key evidence  
+<b/>
+
+Fraction of positive revisions overall: 0.57 (revisions are roughly balanced; not systematic huge one-sided bias).  
+<b/>
+
+Mean absolute revision: 56.9 thousands (typical revision magnitude is modest)  
+<b/>
+
+Median absolute revision as % of level: 0.0326% (revisions are tiny relative to employment levels typically).  
+<b/>
+
+Year with highest mean relative revision: 1981 (0.8634) — shows isolated historical episodes where relative revisions were large, but these are rare.  
+<b/>
+
+Visual evidence  
+<b/>
+Boxplots by month : each month’s box is centered near zero and widths are comparable — consistent with routine, small revisions rather than systematic manipulation.  
+<b/>
+
+Yearly fraction + relative revision plot : bars (fraction positive) are near 0.5 across years, and the brown line is dominated by isolated extreme years (pandemic, 1990s/1980s episodes), not a steady pattern of manipulation.  
+<b/>
+
+Hypothesis test(s)   
+<b/>
+
+Mean revision ≠ 0? statistic = 3.2594, p = 0.001185 → Reject H0 (there is a statistically significant mean revision, but magnitude small).
+Interpretation: statistically detectable average revision does not imply malicious manipulation; routine sample and seasonal adjustments create small systematic differences between early and final estimates.  
+<b/>
+
+Mean revision ↑ post-2020? statistic = 0.7025, p = 0.4847 → Fail to reject (no evidence mean revisions rose after 2020 in a way that would indicate new systematic manipulation).  
+<b/>
+
+Fraction of negative revisions ↑ post-2000? p = 0.2152 → Fail to reject (no evidence of worsening negative bias after 2000).  
+<b/>
+
+Combining absolute levels + revisions  
+<b/>
+
+Absolute employment levels are large (tens of millions), while median relative revisions are ≈0.03%, so typical revisions are negligible relative to the level. The time series and boxplot show routine small corrections and occasional large outliers (pandemic). That matches Koh’s statement: revisions are normal and there’s no evidence of routine “faking.”  
+<b/>
+
+Conclusion & Rating rationale  
+<b/>
+
+The data support Koh’s claim that “revisions happen all the time” and that there’s no evidence of pervasive falsification in the CES revisions. The small average revision (statistically detectable) and a slightly >50% fraction of positive revisions do not show a pattern of politically timed manipulation.  
+<b/>
+
+Politifact-style rating: Mostly True (accurate characterization; acknowledges revisions are routine and not evidence of fraud).  
+<b/>
+
