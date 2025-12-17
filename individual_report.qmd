@@ -1,0 +1,973 @@
+---
+title: "Do rat complaints differ systematically between NYC and Chicago"
+author: "David zhai"
+format: 
+  html: 
+    theme: flatly
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+execute:
+  enabled: true
+---
+# Introduction  
+<b/>
+  In the United States, many cities use centralized non-emergency reporting systems like 311, through which residents can report issues including rodent activity. These systems are often viewed as indicators of urban conditions, the complaint volumes are shaped by socioeconomic factors, trust in public institutions, and ease of reporting. Neighborhoods with similar environmental conditions may have different levels of reported complaints, depending on institutional design and resident engagement. Understanding how reporting systems produce observed outcomes is essential for interpreting administrative data and for evaluating the effectiveness of urban policy interventions.
+  This paper examines reported rat activity in two of the largest and densest U.S. cities: New York City and Chicago. Both cities face well established rodent challenges, and maintain extensive 311 reporting infrastructures.The enforcement mechanisms, and public usage of these systems differ in meaningful ways. New York City’s 311 platform emphasizes resident initiated reporting and public transparency, whereas Chicago’s system emphasizes on service requests tied to scheduled baiting and inspection activity. These institutional differences raise an important empirical question: do observed differences in rat complaints reflect true differences in rat prevalence, or differences in how residents and governments engage with reporting systems?
+  To address this question, the study constructs a monthly panel dataset of rat related 311 complaints at the ZIP Code Tabulation Area (ZCTA) level from 2010 through 2025. The analysis combines complaint data with weather conditions, local unemployment rates, and neighborhood characteristics drawn from the American Census. To account for systematic heterogeneity across neighborhoods, ZCTAs are grouped into socioeconomically similar clusters using principal component analysis and k-means clustering. This approach allows comparisons between New York City and Chicago within broadly comparable neighborhood types, reducing confounding from structural differences in income, population density, and racial composition.  
+<b/>
+# Data  
+<b/>
+  The primary outcome variable in this study is the monthly count of rat-related service requests recorded through 311 systems in New York City and Chicago. For both cities, individual service requests are timestamped and geolocated using latitude and longitude coordinates. Records with missing or invalid spatial information are removed. Each observation is assigned to a ZIP Code Tabulation Area (ZCTA) using spatial joins with U.S. Census Bureau ZCTA shapefiles. Service requests are then aggregated to the ZCTA–month level, producing a balanced structure at the neighborhood scale. The resulting dependent variable, rat_count, measures the total number of rat-related 311 requests reported within each ZCTA in a given month.
+  Although both datasets capture rodent-related complaints, it is important to note that they reflect slightly different institutional processes. New York City’s data emphasize resident sightings, while Chicago’s data emphasize service requests tied to baiting and inspection activity. These differences are central to the interpretation of cross-city comparisons in reported outcomes.
+  Weather conditions are used to account for biological and behavioral activity of rats. Daily temperature data are obtained from the National Oceanic and Atmospheric Administration for a central monitoring station in each city. For New York City, observations come from station Central Park, and for Chicago from station Midway Airport. Daily maximum and minimum temperatures are converted Celsius to Fahrenheit and aggregated to the monthly level. For each city and month, average maximum temperature and average minimum temperature are computed.
+  Unemployment rates are included to account for potential correlations between economic stress, time spent in residential environments, and the likelihood to submit 311 complaints. Because unemployment rates vary only at the city month level, they capture broad macroeconomic conditions. Local economic conditions are measured using monthly unemployment rates obtained from the Federal Reserve Economic Data database.  
+<b/>
+
+```{r,echo=FALSE}
+#importing 
+library(DT)
+library(dplyr)
+library(ggplot2)
+library(forecast)
+library(tseries)
+library(lubridate)
+library(readr)
+library(rnoaa)
+library(zoo)
+library(tidyr)
+library(tidygeocoder)
+library(purrr)  
+library(sf)
+#temp
+temp_data_nyc <- meteo_pull_monitors(
+  monitors = "USW00094728",
+  var = c("TMAX","TMIN"),
+  date_min = "2010-01-01",
+  date_max = "2025-10-01"
+)
+temp_data_chi <- meteo_pull_monitors(
+  monitors = "USW00094849",
+  var = c("TMAX","TMIN"),
+  date_min = "2010-01-01",
+  date_max = "2025-10-01"
+)
+#rat
+rat_data_nyc <- read_csv("C:/Users/David/Downloads/Rat_Sightings_20251101.csv")
+rat_data_chi <-read_csv("C:/Users/David/Downloads/311_Service_Requests_-_Rodent_Baiting_-_Historical_20251124.csv")
+
+unemp_data_nyc <- read_csv("C:/Users/David/Downloads/NEWY636URN.csv")
+unemp_data_chi <- read_csv("C:/Users/David/Downloads/CHIC917URN.csv")
+names(unemp_data_nyc)[names(unemp_data_nyc) == "NEWY636URN"] <- "nyc_unemp"
+names(unemp_data_chi)[names(unemp_data_chi) == "CHIC917URN"] <- "chi_unemp"
+
+```
+
+```{r}
+#import cencus data for group
+library(tidycensus)
+library(dplyr)
+library(purrr)
+library(tigris)
+library(sf)  
+
+options(tigris_use_cache = TRUE)
+
+
+
+chi_counties <- c("031", "043")  
+nyc_counties <- c("005", "047", "061", "081", "085")  
+
+
+
+zcta_sf <- zctas(year = 2023, class = "sf")
+
+chi_counties_sf <- counties(state = "IL", cb = TRUE, class = "sf") %>%
+  filter(COUNTYFP %in% chi_counties)
+
+nyc_counties_sf <- counties(state = "NY", cb = TRUE, class = "sf") %>%
+  filter(COUNTYFP %in% nyc_counties)
+
+
+
+chicago_zctas <- zcta_sf[st_intersects(zcta_sf, chi_counties_sf, sparse = FALSE) %>% rowSums() > 0, ]$ZCTA5CE20
+nyc_zctas <- zcta_sf[st_intersects(zcta_sf, nyc_counties_sf, sparse = FALSE) %>% rowSums() > 0, ]$ZCTA5CE20
+
+
+
+acs_vars <- c(
+  pop = "B01001_001",
+  income = "B19013_001",
+  pov_total = "B17001_001",
+  pov_below = "B17001_002",
+  white = "B02001_002",
+  black = "B02001_003",
+  asian = "B02001_005",
+  hispanic = "B03003_003"
+)
+
+ years <- 2011:2023  
+
+acs_panel <- map_df(years, function(y) {
+  message("Downloading year: ", y)
+  
+  get_acs(
+    geography = "zcta",
+    variables = acs_vars,
+    year = y,
+    output = "wide"
+  ) %>%
+    filter(GEOID %in% c(chicago_zctas, nyc_zctas)) %>%
+    mutate(
+      year = y,
+      city = case_when(
+        GEOID %in% chicago_zctas ~ "Chicago",
+        GEOID %in% nyc_zctas ~ "New York"
+      ),
+      poverty_rate = 100 * pov_belowE / pov_totalE
+    )
+})
+acs_panel_clean <- na.omit(acs_panel)
+
+chicago_geoids <- unique(acs_panel_clean$GEOID[acs_panel_clean$city == "Chicago"])
+nyc_geoids <- unique(acs_panel_clean$GEOID[acs_panel_clean$city == "New York"])
+zcta_file <- st_read("C:/Users/David/Downloads/tl_2023_us_zcta520/tl_2023_us_zcta520.shp")
+
+chicago_id <- intersect(
+  chicago_geoids,
+  zcta_file$ZCTA5CE20
+)
+
+length(chicago_id)
+head(chicago_id)
+
+zcta_chicago <- zcta_file[zcta_file$ZCTA5CE20 %in% chicago_id, ]
+
+setdiff(chicago_geoids, zcta_file$ZCTA5CE20)
+
+
+
+nyc_id <- intersect(
+  nyc_geoids,
+  zcta_file$ZCTA5CE20
+)
+length(nyc_id)
+head(nyc_id)
+
+zcta_nyc <- zcta_file[zcta_file$ZCTA5CE20 %in% nyc_id, ]
+
+setdiff(nyc_geoids, zcta_file$ZCTA5CE20)
+```
+
+```{r}
+#aggregate by zip and monthly
+rat_data_nyc <- rat_data_nyc|>
+ select(
+  -`Unique Key`,
+  -`Closed Date`,
+  -Agency,
+  -`Agency Name`,
+  -`Complaint Type`,
+  -Descriptor,
+  -`Location Type`,
+  -`Incident Address`,
+  -`Street Name`,
+  -`Cross Street 1`,
+  -`Cross Street 2`,
+  -`Intersection Street 1`,
+  -`Intersection Street 2`,
+  -`Address Type`,
+  -City,
+  -Landmark,
+  -`Facility Type`,
+  -Status,
+  -`Due Date`,
+  -`Resolution Action Updated Date`,
+  -`Community Board`,
+  -Borough,
+  -`X Coordinate (State Plane)`,
+  -`Y Coordinate (State Plane)`,
+  -`Park Facility Name`,
+  -`Park Borough`,
+  -`Vehicle Type`,
+  -`Taxi Company Borough`,
+  -`Taxi Pick Up Location`,
+  -`Bridge Highway Name`,
+  -`Bridge Highway Direction`,
+  -`Road Ramp`,
+  -`Bridge Highway Segment`,
+)
+rat_data_nyc$Date <- as.Date(
+  rat_data_nyc$`Created Date`,
+  format = "%Y %b %d %I:%M:%S %p"
+)
+rat_data_nyc <- rat_data_nyc|>
+  select(
+    -`Created Date`
+  )
+rat_data_nyc$Month <- format(rat_data_nyc$Date, "%Y-%m")
+```
+```{r}
+library(sf)
+
+rat_data_nyc <- rat_data_nyc |>
+  drop_na()
+
+rats_sf_nyc <- st_as_sf(
+  rat_data_nyc,
+  coords = c("Longitude", "Latitude"),
+  crs = 4326,   # WGS84 (standard for lat/lon)
+  remove = FALSE
+)
+
+rats_sf_nyc <- st_transform(rats_sf_nyc, st_crs(zcta_nyc))
+
+rat_data_nyc <- st_join(
+  rats_sf_nyc,
+  zcta_nyc[, "ZCTA5CE20"],  # only keep the ZCTA ID column
+  join = st_within
+)
+colnames(rat_data_nyc)[colnames(rat_data_nyc) == "ZCTA5CE20"] <- "ZCTA"
+
+rat_data_nyc <- rat_data_nyc |>
+  drop_na()
+rat_data_nyc$Month <- format(rat_data_nyc$Date, "%Y-%m")
+
+rat_data_nyc <- rat_data_nyc |>
+  group_by(Month, ZCTA) |>
+  summarise(rat_count = n()) |>
+  arrange(Month)
+
+any(is.na(rat_data_nyc))
+
+```
+
+```{r}
+#aggregate nyc temp 
+temp_data_nyc$date <- as.Date(temp_data_nyc$date)
+temp_data_nyc <- temp_data_nyc |>
+  mutate(
+    tmax_c = tmax / 10,
+    tmin_c = tmin / 10,
+    tmax_f = tmax_c * 9/5 + 32,
+    tmin_f = tmin_c * 9/5 + 32
+  )
+temp_data_nyc$date <- as.Date(
+  temp_data_nyc$date,
+  format = "%Y %b %d %I:%M:%S %p"
+)
+temp_data_nyc$Month <- format(temp_data_nyc$date, "%Y-%m")
+
+temp_data_nyc <- temp_data_nyc |>
+  group_by(Month) |>
+  summarise(
+    avg_tmax = mean(tmax_f, na.rm = TRUE),
+    avg_tmin = mean(tmin_f, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+any(is.na(temp_data_nyc))
+```
+
+```{r}
+unemp_data_nyc$observation_date <- as.Date(unemp_data_nyc$observation_date)
+
+unemp_data_nyc$observation_date <- as.Date(
+  unemp_data_nyc$observation_date,
+  format = "%Y %b %d %I:%M:%S %p"
+)
+unemp_data_nyc$Month <- format(unemp_data_nyc$observation_date, "%Y-%m")
+
+unemp_data_nyc <- unemp_data_nyc |>
+  group_by(Month) |>
+  summarise(
+    average_unemp=mean(nyc_unemp, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+unemp_data_nyc <- unemp_data_nyc |>
+  filter(Month > 100)
+unemp_data_nyc <- unemp_data_nyc %>%
+  filter(Month >= "2010-01" & Month <= "2025-10")
+any(is.na(unemp_data_nyc))
+
+```
+
+```{r}
+#Joinin all NYC data
+NYC_data <- rat_data_nyc|>
+  left_join(temp_data_nyc, by = "Month") |>
+  left_join(unemp_data_nyc, by = "Month")
+any(is.na(NYC_data))
+
+```
+
+```{r}
+#creating variables (Cityvar)
+NYC_data$City <- 1
+```
+
+```{r}
+#creating month dummy variables
+NYC_data$MonthDate <- as.Date(paste0(NYC_data$Month, "-01"))
+
+NYC_data$MonthNum <- as.numeric(format(NYC_data$MonthDate, "%m"))
+
+NYC_data$MonthFactor <- factor(NYC_data$MonthNum, levels = 1:12, labels = month.abb)
+
+month_dummies <- model.matrix(~ MonthFactor - 1, data = NYC_data)
+
+NYC_data <- cbind(NYC_data, month_dummies)
+
+NYC_data <- NYC_data %>%
+  filter( Month <= "2025-08")
+
+
+any(is.na(NYC_data))
+
+NYC_data$ZCTA <- as.character(NYC_data$ZCTA)
+
+```
+
+```{r}
+
+rat_data_chi <- rat_data_chi %>%
+    filter(!is.na(`Creation Date`))
+rat_data_chi <- rat_data_chi |>
+  select(
+    -Status,
+    -`Completion Date`,
+    -`Service Request Number`,
+    -`Type of Service Request`,
+    -`Number of Premises Baited`,
+    -`Number of Premises with Garbage`,
+    -`Number of Premises with Rats`,
+    -`Current Activity`,
+    -`Most Recent Action`,
+    -`Street Address`,
+    -`X Coordinate`,
+    -`Y Coordinate`,
+    -Ward,
+    -`Police District`,
+    -`Community Area`,
+  )
+
+rat_data_chi$Date <- as.Date(
+  rat_data_chi$`Creation Date`,
+  format = "%m/%d/%Y"
+)
+rat_data_chi <- rat_data_chi|>
+ select(
+    -`Creation Date`
+ )
+
+rat_data_chi$Month <- format(rat_data_chi$Date, "%Y-%m")
+```
+
+```{r}
+library(sf)
+
+rat_data_chi <- rat_data_chi |>
+  drop_na()
+
+chi_sf_nyc <- st_as_sf(
+  rat_data_chi,
+  coords = c("Longitude", "Latitude"),
+  crs = 4326,   # WGS84 (standard for lat/lon)
+  remove = FALSE
+)
+
+chi_sf_nyc <- st_transform(chi_sf_nyc, st_crs(zcta_chicago))
+
+rat_data_chi <- st_join(
+  chi_sf_nyc,
+  zcta_chicago[, "ZCTA5CE20"],  # only keep the ZCTA ID column
+  join = st_within
+)
+
+colnames(rat_data_chi)[colnames(rat_data_chi) == "ZCTA5CE20"] <- "ZCTA"
+
+
+rat_data_chi <- rat_data_chi |>
+  drop_na()
+
+rat_data_chi <- rat_data_chi |>
+  group_by(Month, ZCTA) |>
+  summarise(rat_count = n()) |>
+  arrange(Month)
+
+any(is.na(rat_data_chi))
+```
+
+```{r}
+#fixing chi temp
+temp_data_chi$date <- as.Date(temp_data_chi$date)
+temp_data_chi <- temp_data_chi |>
+  mutate(
+    tmax_c = tmax / 10,
+    tmin_c = tmin / 10,
+    tmax_f = tmax_c * 9/5 + 32,
+    tmin_f = tmin_c * 9/5 + 32
+  )
+temp_data_chi$date <- as.Date(
+  temp_data_chi$date,
+  format = "%Y %b %d %I:%M:%S %p"
+)
+temp_data_chi$Month <- format(temp_data_chi$date, "%Y-%m")
+
+temp_data_chi <- temp_data_chi |>
+  group_by(Month) |>
+  summarise(
+    avg_tmax = mean(tmax_f, na.rm = TRUE),
+    avg_tmin = mean(tmin_f, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+any(is.na(temp_data_chi))
+```
+
+```{r}
+#fixing unemp chi
+
+unemp_data_chi$observation_date <- as.Date(unemp_data_chi$observation_date)
+
+unemp_data_chi$observation_date <- as.Date(
+  unemp_data_chi$observation_date,
+  format = "%Y %b %d %I:%M:%S %p"
+)
+unemp_data_chi$Month <- format(unemp_data_chi$observation_date, "%Y-%m")
+
+unemp_data_chi <- unemp_data_chi |>
+  group_by(Month) |>
+  summarise(
+    average_unemp=mean(chi_unemp, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+unemp_data_chi <- unemp_data_chi |>
+  filter(Month > 100)
+unemp_data_chi <- unemp_data_chi %>%
+  filter(Month >= "2010-01" & Month <= "2025-10")
+any(is.na(unemp_data_chi))
+```
+```{r}
+CHI_data <- rat_data_chi|>
+  left_join(temp_data_chi, by = "Month") |>
+  left_join(unemp_data_chi, by = "Month")
+CHI_data <- CHI_data %>%
+  filter( Month >= "2010-01" & Month <= "2025-08" )
+
+any(is.na(CHI_data))
+
+```
+
+```{r}
+#city var and month dummy
+CHI_data$City <- 0
+
+CHI_data$MonthDate <- as.Date(paste0(CHI_data$Month, "-01"))
+
+CHI_data$MonthNum <- as.numeric(format(CHI_data$MonthDate, "%m"))
+
+CHI_data$MonthFactor <- factor(CHI_data$MonthNum, levels = 1:12, labels = month.abb)
+
+month_dummies <- model.matrix(~ MonthFactor - 1, data = CHI_data)
+
+CHI_data <- cbind(CHI_data, month_dummies)
+```
+
+```{r}
+#appending data
+
+combined_data <- rbind(CHI_data, NYC_data)
+unique_zcta <-unique(combined_data$ZCTA)
+acs_panel_clean$GEOID <- as.character(acs_panel_clean$GEOID)
+combined_data$ZCTA <- as.character(combined_data$ZCTA)
+df_filtered <- acs_panel_clean[acs_panel_clean$GEOID %in% combined_data$ZCTA, ]
+```
+# Grouping  
+<b/>
+	To take into account persistent structural differences across neighborhoods, the analysis uses demographic and socioeconomic data from the American Community Survey. ZCTA-level data includes population size, median household income, poverty rates, and racial and ethnic composition.
+  To reduce dimensionality and avoid multicollinearity, principal component analysis is applied to standardized measures of income, poverty, population size, and racial composition. The first three principal components, which capture the majority of variance in neighborhood characteristics, are used as inputs for k-means clustering. ZCTAs are then grouped into five distinct neighborhood types based on their socioeconomic profiles.
+  This grouping strategy allows comparisons between New York City and Chicago within broadly similar neighborhood contexts, rather than relying on direct one to one ZCTA code matching. Each ZCTA is assigned a fixed group label that remains constant over time.  
+  <b/>
+#final dataset  
+<b/>
+  The final dataset is structured as an unbalanced panel indexed by ZCTA and month, spanning January 2010 through August 2025. Observations are kept only when rat complaint data, weather variables, and unemployment rates are jointly observed. Monthly indicator variables are constructed to control for seasonality, with January serving as the omitted reference category. The combined dataset includes observations from both cities, with a binary indicator variable identifying New York City versus Chicago.  
+<b/>  
+
+```{r}
+#grouping
+acs_profile <- df_filtered %>%
+  filter(year <= 2017) %>%
+  group_by(GEOID, city) %>%
+  summarise(
+    income = mean(incomeE, na.rm = TRUE),
+    poverty = mean(poverty_rate, na.rm = TRUE),
+    pct_white = mean(whiteE / popE, na.rm = TRUE),
+    pct_black = mean(blackE / popE, na.rm = TRUE),
+    pct_asian = mean(asianE / popE, na.rm = TRUE),
+    pct_hispanic = mean(hispanicE / popE, na.rm = TRUE),
+    log_pop = mean(log(popE), na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r}
+X <- acs_profile %>%
+  select(income, poverty, pct_white, pct_black, pct_asian, pct_hispanic, log_pop)
+X_scaled <- scale(X)
+
+```
+
+```{r}
+pca <- prcomp(X_scaled)
+summary(pca)
+
+```
+
+```{r}
+PCs <- pca$x[, 1:3]
+```
+
+
+```{r}
+set.seed(123)
+k <- 5
+
+km <- kmeans(PCs, centers = k, nstart = 50)
+acs_profile$geo_group <- km$cluster
+
+aggregate(
+  acs_profile[, c("income", "poverty")],
+  by = list(acs_profile$geo_group),
+  mean
+)
+
+table(acs_profile$geo_group, acs_profile$city)
+
+```
+# Interpretation of groups:  
+<b/>
+  The clustering identifies five distinct neighborhood types that differ systematically in income, poverty, and racial composition. These groups represent meaningful socioeconomic and demographic class.   
+  <b/>
+## Group 1  
+<b/>
+  Group 1 is the most economically disadvantaged cluster, with an average household income of approximately $36,000 and a poverty rate exceeding 30 percent. Racial composition is relatively mixed, with no single majority group. The relatively high standard deviations across racial shares indicate moderate heterogeneity within this group.  
+  <b/>
+## Group 2  
+<b/>
+  Group 2 has moderate incomes of about $61,000 and substantially lower poverty rates. This group is notable for its racial diversity, with a substantial Asian population , alongside White and Hispanic residents. The dispersion measures suggest more internal heterogeneity than other groups.  
+  <b/>
+## Group 3  
+<b/>
+ Group 3 exhibits relatively high average income , around $63,000 and low poverty rates . These neighborhoods are predominantly White, with smaller Black, Asian, and Hispanic populations. Compared to Group 2, Group 3 is more racially homogeneous and economically stable.  
+ <b/>
+## Group 4  
+<b/>
+Group 4 is economically disadvantaged, with average income around $44,000 and poverty rates above 24 percent. These neighborhoods are overwhelmingly Black , with relatively little racial heterogeneity. Low standard deviations across racial shares indicate strong internal homogeneity.  
+<b/>
+## Group 5  
+<b/>
+Group 5 is the most affluent cluster, with average income exceeding $108,000 and poverty rates below 8 percent. These neighborhoods are predominantly White, with small Asian and Hispanic minorities and very little internal heterogeneity. This group is economically and demographically distinct from all others.  
+<b/>
+ 
+```{r}
+race_by_group <- acs_profile %>%
+  group_by(geo_group) %>%
+  summarise(
+    white = mean(pct_white, na.rm = TRUE),
+    black = mean(pct_black, na.rm = TRUE),
+    asian = mean(pct_asian, na.rm = TRUE),
+    hispanic = mean(pct_hispanic, na.rm = TRUE),
+    n_zcta = n(),
+    .groups = "drop"
+  )
+
+race_by_group
+
+```
+
+```{r}
+race_sd <- acs_profile %>%
+  group_by(geo_group) %>%
+  summarise(
+    sd_white = sd(pct_white, na.rm = TRUE),
+    sd_black = sd(pct_black, na.rm = TRUE),
+    sd_asian = sd(pct_asian, na.rm = TRUE),
+    sd_hispanic = sd(pct_hispanic, na.rm = TRUE)
+  )
+
+race_sd
+#higher sd means <.05 homogenous
+#> .2 mixed
+```
+
+```{r}
+group_summary <- acs_profile %>%
+  group_by(geo_group) %>%
+  summarise(
+    income = mean(income, na.rm = TRUE),
+    poverty = mean(poverty, na.rm = TRUE),
+    pct_white = mean(pct_white, na.rm = TRUE),
+    pct_black = mean(pct_black, na.rm = TRUE),
+    pct_asian = mean(pct_asian, na.rm = TRUE),
+    pct_hispanic = mean(pct_hispanic, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  )
+
+group_summary
+
+```
+
+```{r}
+geo_lookup <- acs_profile %>%
+  select(GEOID, geo_group)
+
+colnames(geo_lookup)[colnames(geo_lookup) == "GEOID"] <- "ZCTA"
+```
+
+```{r}
+library(plm)   
+library(lmtest) 
+
+combined_data <- combined_data|>
+  left_join(geo_lookup, by = "ZCTA")
+
+combined_data <-combined_data|>
+  drop_na()
+```
+
+
+```{r}
+group<-split(combined_data, combined_data$geo_group)
+group1<- group[["1"]]
+any(is.na(group1))
+
+group2<- group[["2"]]
+any(is.na(group2))
+
+group3<- group[["3"]]
+any(is.na(group3))
+
+group4<- group[["4"]]
+any(is.na(group4))
+
+group5<- group[["5"]]
+any(is.na(group5))
+summary(group1)
+summary(group3)
+summary(group5)
+```
+# Empirical Strategy and Model Specification  
+<b/>
+  The objective of this analysis is to assess whether differences in reporting systems contribute to systematic differences in reported rat sightings between New York City and Chicago, conditional on comparable neighborhood characteristics. Because raw comparisons across cities risk confounding institutional differences with underlying socioeconomic and demographic variation, the empirical strategy proceeds in two steps: grouping ZCTA codes into comparable neighborhood types, and then estimating regression models within these matched groups.  
+  <b/>
+
+```{r}
+panel_data1 <- pdata.frame(group1, index = c("ZCTA", "MonthDate"))
+panel_data2 <- pdata.frame(group2, index = c("ZCTA", "MonthDate"))
+panel_data3 <- pdata.frame(group3, index = c("ZCTA", "MonthDate"))
+panel_data4 <- pdata.frame(group4, index = c("ZCTA", "MonthDate"))
+panel_data5 <- pdata.frame(group5, index = c("ZCTA", "MonthDate"))
+
+formula <- rat_count ~ avg_tmax+ avg_tmin + City + average_unemp+
+  MonthFactorFeb + MonthFactorMar + MonthFactorApr + MonthFactorMay +
+  MonthFactorJun + MonthFactorJul + MonthFactorAug + MonthFactorSep +
+  MonthFactorOct + MonthFactorNov + MonthFactorDec
+
+re_model1 <- plm(formula, data = panel_data1, model = "random")
+summary(re_model1)
+
+re_model2 <- plm(formula, data = panel_data2, model = "random")
+summary(re_model2)
+
+re_model3 <- plm(formula, data = panel_data3, model = "random")
+summary(re_model3)
+
+re_model4 <- plm(formula, data = panel_data4, model = "random")
+summary(re_model4)
+
+re_model5 <- plm(formula, data = panel_data5, model = "random")
+summary(re_model5)
+
+```
+#  Panel Data Structure  
+<b/>
+he resulting dataset is a ZCTA month panel spanning 2010–2025. The primary outcome variable is the number of reported rat sightings in a given ZCTA code and month. Each observation is associated with a city indicator, neighborhood group membership, weather controls (average monthly minimum and maximum temperatures), local unemployment rates, and month fixed effects to account for seasonality  
+<b/>
+
+$$
+\{rat_count}_{it}^{(g)} = \beta_0^{(g)} + \beta_1^{(g)} \, \{avg_tmax}_{it} + \beta_2^{(g)} \, \{avg_tmin}_i+ \beta_3^{(g)}\ \{City}_{0,1}
++ \sum_{m=\text{Feb}}^{\{Dec}} \gamma_m^{(g)} \, \{MonthFactor}_{mt} + \epsilon_{it}^{(g)}
+$$
+  
+  <b/>
+- RatCountz,t​ is the number of rat sightings reported in ZCTA code zzz during month ttt.  
+<b/>
+-  \text{City}_{0,1}​ is an indicator variable equal to 0 if ZCTA code zzz is located in Chicago and 1 if it is located in New York City, which serves as the reference category.  
+<b/>  
+
+- \text beta_1^{(g)} , text{avg_tmax}_{it} + \beta_2^{(g)} , text{avg_tmin}_i​\ is a vector of time-varying controls, including average monthly maximum and minimum temperatures and the local unemployment rate, which account for environmental and economic conditions that may influence rat activity and reporting behavior.  
+<b/>
+
+
+- \textgamma_m^{(g)} denotes month fixed effects, which capture common seasonal patterns in rat sightings across cities, such as higher reports during warmer months.  
+<b/>
+
+
+εz,t\varepsilon_{z,t}εz,t​ is the error term, capturing unobserved factors that vary across ZCTA codes and over time.  
+<b/>
+
+  To further enhance comparability, the model is estimated separately within each neighborhood group. This approach allows the city coefficient to be interpreted as the difference in reported rat sightings between Chicago and New York City within socioeconomically similar ZCTA, rather than across the full and highly heterogeneous landscape.This group strategy avoids reliance on strong assumptions required by random effects models and mitigates concerns that unobserved ZCTA characteristics such as housing density, sanitation infrastructure, or historical pest prevalence are correlated with city membership.  
+<b/>  
+
+# Results  
+<b/>
+## 5.1 Temperature Effects  
+<b/>
+  Across all neighborhood groups, temperature variables are statistically significant and display consistent directional effects. Higher average maximum temperature is positively associated with rat sightings, while higher average minimum temperature is negatively associated. However, the magnitude of these effects is moderate. A 10°F increase in average maximum temperature is associated with approximately 4 to 27 additional monthly rat sightings, depending on neighborhood group, while a comparable increase in minimum temperature reduces reported sightings by roughly 2 to 16. These results suggest that temperature influences rat activity and reporting behavior, but weather alone explains only a limited share of overall variation in rat complaints relative to seasonal and institutional factors.  
+  
+  <b/>
+##  5.2 Seasonal Patterns
+  Month fixed effects are uniformly negative relative to January, which serves as the reference month. This indicates that, conditional on weather and economic conditions, reported rat sightings are highest in January across all neighborhood groups. This pattern likely reflects increased indoor rat activity and heightened reporting during winter months, rather than biological seasonality alone. Because temperature is explicitly controlled for, the month effects capture non-climatic seasonal factors such as reporting behavior, building usage patterns, and enforcement cycles.
+  
+  <b/>
+##  5.3 Economic Conditions
+  Local unemployment rates are negatively associated with rat sightings in all specifications. A one-percentage-point increase in unemployment is associated with approximately 0.3 to 1.6 fewer monthly rat reports, depending on neighborhood group. While this relationship is not the primary focus of the analysis, it suggests that economic conditions may influence reporting behavior or service utilization rather than underlying rat prevalence.  
+  <b/>
+## 5.4 City-Level Differences  
+<b/>  
+
+	The estimated coefficient on the city indicator is large, statistically significant, and robust across all model specifications and neighborhood groupings. Because the city variable is coded as 1 for New York City and 0 for Chicago, the negative coefficient implies that, holding constant weather conditions, local economic factors, and seasonal effects, ZCTA codes in New York City consistently report fewer rat sightings than observationally similar ZCTA codes in Chicago.  
+	<b/>
+	The magnitude of this difference is substantial. Depending on the neighborhood group, New York City ZCTA codes report between approximately 20 and 50 fewer rat sightings per month relative to Chicago ZCTA. 
+The diversity of the city effect across neighborhood groups further supports this interpretation. The estimated New York City reporting gap is largest in lower-income and higher-density neighborhoods, where residents may be more likely to engage with a simple, targeted reporting system. In contrast, the gap is smaller in higher-income ZCTA codes, where residents may rely on private pest control services or alternative reporting channels that are not captured in public 311 data. This pattern is consistent with a mechanism in which institutional design interacts with neighborhood characteristics to shape reporting behavior.
+  
+  <b/>
+	Additionally, the persistence of the city effect after controlling for month fixed effects is particularly important. Month fixed effects absorb broad seasonal patterns in reporting behavior that are common across cities. The fact that a sizable city coefficient remains indicates that the observed differences are not driven by differences in seasonal timing, weather seasonality, or cyclical public awareness campaigns.  
+	<b/>  
+	
+	Taken together, these findings suggest that the observed disparity in rat sightings between Chicago and New York City is unlikely to reflect differences in environmental conditions. Instead, the results are consistent with the hypothesis that Chicago’s 311 reporting system generates higher reported rat activity through lower reporting barriers and more standardized complaint categorization. While the analysis does not establish causality, it provides strong descriptive evidence that institutional reporting structures play a central role in shaping observed urban pest complaint data.  
+	<b/>
+## 5.5 Model Fit and Variation
+The models explain between 11% and 21% of total variation in rat sightings, depending on neighborhood group. Decomposition of variance components indicates that both within ZCTA and ZCTA variation contribute meaningfully to observed outcomes, supporting the use of panel methods. Importantly, the persistence of the city effect after conditioning on temperature and month fixed effects suggests that observed differences in reported rat sightings between Chicago and New York City are unlikely to be driven by climate or seasonal patterns alone.  
+<b/>
+
+
+```{r}
+library(broom)
+library(dplyr)
+
+models <- list(
+  Group1 = re_model1,
+  Group2 = re_model2,
+  Group3 = re_model3,
+  Group4 = re_model4,
+  Group5 = re_model5
+)
+
+coef_df <- bind_rows(
+  lapply(names(models), function(n) {
+    tidy(models[[n]]) %>% mutate(Group = n)
+  })
+)
+
+```
+
+```{r}
+library(ggplot2)
+
+coef_df %>%
+  filter(term %in% c("avg_tmax", "avg_tmin", "average_unemp")) %>%
+  ggplot(aes(x = term, y = estimate, color = Group)) +
+  geom_point(position = position_dodge(width = 0.4), size = 3) +
+  geom_errorbar(
+    aes(ymin = estimate - 1.96 * std.error,
+        ymax = estimate + 1.96 * std.error),
+    position = position_dodge(width = 0.4),
+    width = 0.2
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Random Effects Estimates Across Groups",
+    x = "Covariate",
+    y = "Coefficient Estimate"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+panel_data1$City <- factor(panel_data1$City)
+panel_data2$City <- factor(panel_data2$City)
+panel_data3$City <- factor(panel_data3$City)
+panel_data4$City <- factor(panel_data4$City)
+panel_data5$City <- factor(panel_data5$City)
+
+
+
+
+
+panel_data1$pred <- predict(re_model1)
+
+ggplot(panel_data1, aes(x = pred, y = rat_count, color = City)) +
+  geom_point(alpha = 0.4) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
+  scale_color_brewer(palette = "Set2") +
+  labs(
+    title = "Predicted vs Actual Rat Counts (Group 1)",
+    x = "Predicted",
+    y = "Observed",
+    color = "City"
+  ) +
+  theme_minimal()
+
+panel_data2$pred <- predict(re_model2)
+
+ggplot(panel_data2, aes(x = pred, y = rat_count, color = City)) +
+  geom_point(alpha = 0.4) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
+  scale_color_brewer(palette = "Set2") +
+  labs(
+    title = "Predicted vs Actual Rat Counts (Group 2)",
+    x = "Predicted",
+    y = "Observed",
+    color = "City"
+  ) +
+  theme_minimal()
+
+panel_data3$pred <- predict(re_model3)
+
+ggplot(panel_data3, aes(x = pred, y = rat_count, color = City)) +
+  geom_point(alpha = 0.4) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
+  scale_color_brewer(palette = "Set2") +
+  labs(
+    title = "Predicted vs Actual Rat Counts (Group 3)",
+    x = "Predicted",
+    y = "Observed",
+    color = "City"
+  ) +
+  theme_minimal()
+
+
+
+panel_data4$pred <- predict(re_model4)
+
+ggplot(panel_data4, aes(x = pred, y = rat_count, color = City)) +
+  geom_point(alpha = 0.4) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
+  scale_color_brewer(palette = "Set2") +
+  labs(
+    title = "Predicted vs Actual Rat Counts (Group 4)",
+    x = "Predicted",
+    y = "Observed",
+    color = "City"
+  ) +
+  theme_minimal()
+
+
+panel_data5$pred <- predict(re_model5)
+
+ggplot(panel_data5, aes(x = pred, y = rat_count, color = City)) +
+  geom_point(alpha = 0.4) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
+  scale_color_brewer(palette = "Set2") +
+  labs(
+    title = "Predicted vs Actual Rat Counts (Group 5)",
+    x = "Predicted",
+    y = "Observed",
+    color = "City"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+ggplot(group1, aes(x = MonthDate, y = rat_count, group = ZCTA)) +
+  geom_line(alpha = 0.2) +
+  stat_summary(aes(group = 1), fun = mean, geom = "line",
+               linewidth = 1.2, color = "black") +
+  labs(
+    title = "Rat Count Trends Over Time (Group 1)",
+    y = "Rat Count"
+  ) +
+  theme_minimal()
+
+ggplot(group2, aes(x = MonthDate, y = rat_count, group = ZCTA)) +
+  geom_line(alpha = 0.2) +
+  stat_summary(aes(group = 2), fun = mean, geom = "line",
+               linewidth = 1.2, color = "black") +
+  labs(
+    title = "Rat Count Trends Over Time (Group 2)",
+    y = "Rat Count"
+  ) +
+  theme_minimal()
+
+ggplot(group3, aes(x = MonthDate, y = rat_count, group = ZCTA)) +
+  geom_line(alpha = 0.2) +
+  stat_summary(aes(group = 3), fun = mean, geom = "line",
+               linewidth = 1.2, color = "black") +
+  labs(
+    title = "Rat Count Trends Over Time (Group 3)",
+    y = "Rat Count"
+  ) +
+  theme_minimal()
+
+ggplot(group4, aes(x = MonthDate, y = rat_count, group = ZCTA)) +
+  geom_line(alpha = 0.2) +
+  stat_summary(aes(group = 4), fun = mean, geom = "line",
+               linewidth = 1.2, color = "black") +
+  labs(
+    title = "Rat Count Trends Over Time (Group 4)",
+    y = "Rat Count"
+  ) +
+  theme_minimal()
+ggplot(group5, aes(x = MonthDate, y = rat_count, group = ZCTA)) +
+  geom_line(alpha = 0.2) +
+  stat_summary(aes(group = 5), fun = mean, geom = "line",
+               linewidth = 1.2, color = "black") +
+  labs(
+    title = "Rat Count Trends Over Time (Group 5)",
+    y = "Rat Count"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+group1$Group <- "Group 1"
+group2$Group <- "Group 2"
+group3$Group <- "Group 3"
+group4$Group <- "Group 4"
+group5$Group <- "Group 5"
+library(dplyr)
+
+all_groups <- bind_rows(group1, group2, group3, group4, group5)
+
+ggplot(all_groups, aes(x = MonthDate, y = rat_count, group = interaction(Group, ZCTA))) +
+  geom_line(alpha = 0.15, aes(color = Group)) +
+  stat_summary(
+    aes(group = Group, color = Group),
+    fun = mean,
+    geom = "line",
+    linewidth = 1.4
+  ) +
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    title = "Rat Count Trends Over Time by Group",
+    y = "Rat Count",
+    color = "Group"
+  ) +
+  theme_minimal()
+
+```
+#conclusion  
+
+<b/>
+  This analysis shows clear differences in reported rat sightings between Chicago and New York City, even after accounting for weather, unemployment, and seasonal effects. Chicago ZCTA codes consistently show higher monthly counts, suggesting that institutional and reporting mechanisms, rather than purely environmental factors, shape observed complaint patterns. Neighborhood level heterogeneity further highlights how local demographics interact with reporting systems. These findings indicate the importance of considering institutional context when interpreting urban pest data and suggest that city-level differences in reporting infrastructure can significantly influence the patterns captured in public complaint datasets.  
+<b/>
