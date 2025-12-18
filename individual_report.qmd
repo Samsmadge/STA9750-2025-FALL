@@ -17,8 +17,10 @@ execute:
   In the United States, many cities use centralized non-emergency reporting systems like 311, through which residents can report issues including rodent activity. These systems are often viewed as indicators of urban conditions, the complaint volumes are shaped by socioeconomic factors, trust in public institutions, and ease of reporting. Neighborhoods with similar environmental conditions may have different levels of reported complaints, depending on institutional design and resident engagement. Understanding how reporting systems produce observed outcomes is essential for interpreting administrative data and for evaluating the effectiveness of urban policy interventions.
   This paper examines reported rat activity in two of the largest and densest U.S. cities: New York City and Chicago. Both cities face well established rodent challenges, and maintain extensive 311 reporting infrastructures.The enforcement mechanisms, and public usage of these systems differ in meaningful ways. New York City’s 311 platform emphasizes resident initiated reporting and public transparency, whereas Chicago’s system emphasizes on service requests tied to scheduled baiting and inspection activity. These institutional differences raise an important empirical question: do observed differences in rat complaints reflect true differences in rat prevalence, or differences in how residents and governments engage with reporting systems?
   To address this question, the study constructs a monthly panel dataset of rat related 311 complaints at the ZIP Code Tabulation Area (ZCTA) level from 2010 through 2025. The analysis combines complaint data with weather conditions, local unemployment rates, and neighborhood characteristics drawn from the American Census. To account for systematic heterogeneity across neighborhoods, ZCTAs are grouped into socioeconomically similar clusters using principal component analysis and k-means clustering. This approach allows comparisons between New York City and Chicago within broadly comparable neighborhood types, reducing confounding from structural differences in income, population density, and racial composition.  
+<b/>  
 <b/>
-# Data  
+  
+# Data
 <b/>
   The primary outcome variable in this study is the monthly count of rat-related service requests recorded through 311 systems in New York City and Chicago. For both cities, individual service requests are timestamped and geolocated using latitude and longitude coordinates. Records with missing or invalid spatial information are removed. Each observation is assigned to a ZIP Code Tabulation Area (ZCTA) using spatial joins with U.S. Census Bureau ZCTA shapefiles. Service requests are then aggregated to the ZCTA–month level, producing a balanced structure at the neighborhood scale. The resulting dependent variable, rat_count, measures the total number of rat-related 311 requests reported within each ZCTA in a given month.
   Although both datasets capture rodent-related complaints, it is important to note that they reflect slightly different institutional processes. New York City’s data emphasize resident sightings, while Chicago’s data emphasize service requests tied to baiting and inspection activity. These differences are central to the interpretation of cross-city comparisons in reported outcomes.
@@ -26,7 +28,7 @@ execute:
   Unemployment rates are included to account for potential correlations between economic stress, time spent in residential environments, and the likelihood to submit 311 complaints. Because unemployment rates vary only at the city month level, they capture broad macroeconomic conditions. Local economic conditions are measured using monthly unemployment rates obtained from the Federal Reserve Economic Data database.  
 <b/>
 
-```{r,echo=FALSE}
+```{r,message=FALSE, warning=FALSE}
 #importing 
 library(DT)
 library(dplyr)
@@ -65,7 +67,7 @@ names(unemp_data_chi)[names(unemp_data_chi) == "CHIC917URN"] <- "chi_unemp"
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 #import cencus data for group
 library(tidycensus)
 library(dplyr)
@@ -161,7 +163,7 @@ zcta_nyc <- zcta_file[zcta_file$ZCTA5CE20 %in% nyc_id, ]
 setdiff(nyc_geoids, zcta_file$ZCTA5CE20)
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 #aggregate by zip and monthly
 rat_data_nyc <- rat_data_nyc|>
  select(
@@ -209,7 +211,7 @@ rat_data_nyc <- rat_data_nyc|>
   )
 rat_data_nyc$Month <- format(rat_data_nyc$Date, "%Y-%m")
 ```
-```{r}
+```{r,message=FALSE, warning=FALSE}
 library(sf)
 
 rat_data_nyc <- rat_data_nyc |>
@@ -244,7 +246,7 @@ any(is.na(rat_data_nyc))
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 #aggregate nyc temp 
 temp_data_nyc$date <- as.Date(temp_data_nyc$date)
 temp_data_nyc <- temp_data_nyc |>
@@ -271,7 +273,7 @@ temp_data_nyc <- temp_data_nyc |>
 any(is.na(temp_data_nyc))
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 unemp_data_nyc$observation_date <- as.Date(unemp_data_nyc$observation_date)
 
 unemp_data_nyc$observation_date <- as.Date(
@@ -295,7 +297,7 @@ any(is.na(unemp_data_nyc))
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 #Joinin all NYC data
 NYC_data <- rat_data_nyc|>
   left_join(temp_data_nyc, by = "Month") |>
@@ -304,12 +306,12 @@ any(is.na(NYC_data))
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 #creating variables (Cityvar)
 NYC_data$City <- 1
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 #creating month dummy variables
 NYC_data$MonthDate <- as.Date(paste0(NYC_data$Month, "-01"))
 
@@ -331,7 +333,7 @@ NYC_data$ZCTA <- as.character(NYC_data$ZCTA)
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 
 rat_data_chi <- rat_data_chi %>%
     filter(!is.na(`Creation Date`))
@@ -366,7 +368,7 @@ rat_data_chi <- rat_data_chi|>
 rat_data_chi$Month <- format(rat_data_chi$Date, "%Y-%m")
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 library(sf)
 
 rat_data_chi <- rat_data_chi |>
@@ -401,7 +403,7 @@ rat_data_chi <- rat_data_chi |>
 any(is.na(rat_data_chi))
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 #fixing chi temp
 temp_data_chi$date <- as.Date(temp_data_chi$date)
 temp_data_chi <- temp_data_chi |>
@@ -428,7 +430,7 @@ temp_data_chi <- temp_data_chi |>
 any(is.na(temp_data_chi))
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 #fixing unemp chi
 
 unemp_data_chi$observation_date <- as.Date(unemp_data_chi$observation_date)
@@ -452,7 +454,7 @@ unemp_data_chi <- unemp_data_chi %>%
   filter(Month >= "2010-01" & Month <= "2025-10")
 any(is.na(unemp_data_chi))
 ```
-```{r}
+```{r,message=FALSE, warning=FALSE}
 CHI_data <- rat_data_chi|>
   left_join(temp_data_chi, by = "Month") |>
   left_join(unemp_data_chi, by = "Month")
@@ -463,7 +465,7 @@ any(is.na(CHI_data))
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 #city var and month dummy
 CHI_data$City <- 0
 
@@ -478,7 +480,7 @@ month_dummies <- model.matrix(~ MonthFactor - 1, data = CHI_data)
 CHI_data <- cbind(CHI_data, month_dummies)
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 #appending data
 
 combined_data <- rbind(CHI_data, NYC_data)
@@ -493,12 +495,12 @@ df_filtered <- acs_panel_clean[acs_panel_clean$GEOID %in% combined_data$ZCTA, ]
   To reduce dimensionality and avoid multicollinearity, principal component analysis is applied to standardized measures of income, poverty, population size, and racial composition. The first three principal components, which capture the majority of variance in neighborhood characteristics, are used as inputs for k-means clustering. ZCTAs are then grouped into five distinct neighborhood types based on their socioeconomic profiles.
   This grouping strategy allows comparisons between New York City and Chicago within broadly similar neighborhood contexts, rather than relying on direct one to one ZCTA code matching. Each ZCTA is assigned a fixed group label that remains constant over time.  
   <b/>
-#final dataset  
+# final dataset  
 <b/>
   The final dataset is structured as an unbalanced panel indexed by ZCTA and month, spanning January 2010 through August 2025. Observations are kept only when rat complaint data, weather variables, and unemployment rates are jointly observed. Monthly indicator variables are constructed to control for seasonality, with January serving as the omitted reference category. The combined dataset includes observations from both cities, with a binary indicator variable identifying New York City versus Chicago.  
 <b/>  
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 #grouping
 acs_profile <- df_filtered %>%
   filter(year <= 2017) %>%
@@ -515,25 +517,25 @@ acs_profile <- df_filtered %>%
   )
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 X <- acs_profile %>%
   select(income, poverty, pct_white, pct_black, pct_asian, pct_hispanic, log_pop)
 X_scaled <- scale(X)
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 pca <- prcomp(X_scaled)
 summary(pca)
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 PCs <- pca$x[, 1:3]
 ```
 
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 set.seed(123)
 k <- 5
 
@@ -554,27 +556,31 @@ table(acs_profile$geo_group, acs_profile$city)
   The clustering identifies five distinct neighborhood types that differ systematically in income, poverty, and racial composition. These groups represent meaningful socioeconomic and demographic class.   
   <b/>
 ## Group 1  
+
 <b/>
   Group 1 is the most economically disadvantaged cluster, with an average household income of approximately $36,000 and a poverty rate exceeding 30 percent. Racial composition is relatively mixed, with no single majority group. The relatively high standard deviations across racial shares indicate moderate heterogeneity within this group.  
   <b/>
-## Group 2  
+##  Group 2  
+
 <b/>
   Group 2 has moderate incomes of about $61,000 and substantially lower poverty rates. This group is notable for its racial diversity, with a substantial Asian population , alongside White and Hispanic residents. The dispersion measures suggest more internal heterogeneity than other groups.  
   <b/>
 ## Group 3  
+
 <b/>
  Group 3 exhibits relatively high average income , around $63,000 and low poverty rates . These neighborhoods are predominantly White, with smaller Black, Asian, and Hispanic populations. Compared to Group 2, Group 3 is more racially homogeneous and economically stable.  
  <b/>
 ## Group 4  
+
 <b/>
 Group 4 is economically disadvantaged, with average income around $44,000 and poverty rates above 24 percent. These neighborhoods are overwhelmingly Black , with relatively little racial heterogeneity. Low standard deviations across racial shares indicate strong internal homogeneity.  
 <b/>
-## Group 5  
+## Group 5
 <b/>
 Group 5 is the most affluent cluster, with average income exceeding $108,000 and poverty rates below 8 percent. These neighborhoods are predominantly White, with small Asian and Hispanic minorities and very little internal heterogeneity. This group is economically and demographically distinct from all others.  
 <b/>
  
-```{r}
+```{r,message=FALSE, warning=FALSE}
 race_by_group <- acs_profile %>%
   group_by(geo_group) %>%
   summarise(
@@ -590,7 +596,7 @@ race_by_group
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 race_sd <- acs_profile %>%
   group_by(geo_group) %>%
   summarise(
@@ -605,7 +611,7 @@ race_sd
 #> .2 mixed
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 group_summary <- acs_profile %>%
   group_by(geo_group) %>%
   summarise(
@@ -623,14 +629,14 @@ group_summary
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 geo_lookup <- acs_profile %>%
   select(GEOID, geo_group)
 
 colnames(geo_lookup)[colnames(geo_lookup) == "GEOID"] <- "ZCTA"
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 library(plm)   
 library(lmtest) 
 
@@ -642,7 +648,7 @@ combined_data <-combined_data|>
 ```
 
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 group<-split(combined_data, combined_data$geo_group)
 group1<- group[["1"]]
 any(is.na(group1))
@@ -667,7 +673,7 @@ summary(group5)
   The objective of this analysis is to assess whether differences in reporting systems contribute to systematic differences in reported rat sightings between New York City and Chicago, conditional on comparable neighborhood characteristics. Because raw comparisons across cities risk confounding institutional differences with underlying socioeconomic and demographic variation, the empirical strategy proceeds in two steps: grouping ZCTA codes into comparable neighborhood types, and then estimating regression models within these matched groups.  
   <b/>
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 panel_data1 <- pdata.frame(group1, index = c("ZCTA", "MonthDate"))
 panel_data2 <- pdata.frame(group2, index = c("ZCTA", "MonthDate"))
 panel_data3 <- pdata.frame(group3, index = c("ZCTA", "MonthDate"))
@@ -728,18 +734,22 @@ $$
 # Results  
 <b/>
 ## 5.1 Temperature Effects  
+
 <b/>
   Across all neighborhood groups, temperature variables are statistically significant and display consistent directional effects. Higher average maximum temperature is positively associated with rat sightings, while higher average minimum temperature is negatively associated. However, the magnitude of these effects is moderate. A 10°F increase in average maximum temperature is associated with approximately 4 to 27 additional monthly rat sightings, depending on neighborhood group, while a comparable increase in minimum temperature reduces reported sightings by roughly 2 to 16. These results suggest that temperature influences rat activity and reporting behavior, but weather alone explains only a limited share of overall variation in rat complaints relative to seasonal and institutional factors.  
   
   <b/>
-##  5.2 Seasonal Patterns
+## 5.2 Seasonal Patterns  
+<b/>
   Month fixed effects are uniformly negative relative to January, which serves as the reference month. This indicates that, conditional on weather and economic conditions, reported rat sightings are highest in January across all neighborhood groups. This pattern likely reflects increased indoor rat activity and heightened reporting during winter months, rather than biological seasonality alone. Because temperature is explicitly controlled for, the month effects capture non-climatic seasonal factors such as reporting behavior, building usage patterns, and enforcement cycles.
   
   <b/>
-##  5.3 Economic Conditions
+## 5.3 Economic Conditions  
+<b/>
   Local unemployment rates are negatively associated with rat sightings in all specifications. A one-percentage-point increase in unemployment is associated with approximately 0.3 to 1.6 fewer monthly rat reports, depending on neighborhood group. While this relationship is not the primary focus of the analysis, it suggests that economic conditions may influence reporting behavior or service utilization rather than underlying rat prevalence.  
   <b/>
-## 5.4 City-Level Differences  
+## 5.4 City-Level Differences   
+
 <b/>  
 
 	The estimated coefficient on the city indicator is large, statistically significant, and robust across all model specifications and neighborhood groupings. Because the city variable is coded as 1 for New York City and 0 for Chicago, the negative coefficient implies that, holding constant weather conditions, local economic factors, and seasonal effects, ZCTA codes in New York City consistently report fewer rat sightings than observationally similar ZCTA codes in Chicago.  
@@ -758,7 +768,7 @@ The models explain between 11% and 21% of total variation in rat sightings, depe
 <b/>
 
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 library(broom)
 library(dplyr)
 
@@ -778,7 +788,7 @@ coef_df <- bind_rows(
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 library(ggplot2)
 
 coef_df %>%
@@ -801,7 +811,7 @@ coef_df %>%
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 panel_data1$City <- factor(panel_data1$City)
 panel_data2$City <- factor(panel_data2$City)
 panel_data3$City <- factor(panel_data3$City)
@@ -887,7 +897,7 @@ ggplot(panel_data5, aes(x = pred, y = rat_count, color = City)) +
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 ggplot(group1, aes(x = MonthDate, y = rat_count, group = ZCTA)) +
   geom_line(alpha = 0.2) +
   stat_summary(aes(group = 1), fun = mean, geom = "line",
@@ -939,7 +949,7 @@ ggplot(group5, aes(x = MonthDate, y = rat_count, group = ZCTA)) +
 
 ```
 
-```{r}
+```{r,message=FALSE, warning=FALSE}
 group1$Group <- "Group 1"
 group2$Group <- "Group 2"
 group3$Group <- "Group 3"
@@ -966,7 +976,7 @@ ggplot(all_groups, aes(x = MonthDate, y = rat_count, group = interaction(Group, 
   theme_minimal()
 
 ```
-#conclusion  
+# conclusion  
 
 <b/>
   This analysis shows clear differences in reported rat sightings between Chicago and New York City, even after accounting for weather, unemployment, and seasonal effects. Chicago ZCTA codes consistently show higher monthly counts, suggesting that institutional and reporting mechanisms, rather than purely environmental factors, shape observed complaint patterns. Neighborhood level heterogeneity further highlights how local demographics interact with reporting systems. These findings indicate the importance of considering institutional context when interpreting urban pest data and suggest that city-level differences in reporting infrastructure can significantly influence the patterns captured in public complaint datasets.  
